@@ -1,0 +1,64 @@
+# SBBTS Default Configuration
+# Values from Table 2 of the SBBTS paper (Section C, Appendix)
+
+# Training parameters
+training:
+  K: 5                    # Number of outer iterations (transport map updates)
+  n_epochs: 1000          # Training epochs per K iteration
+  batch_size: 128         # Mini-batch size
+  learning_rate: 1.0e-3   # Adam optimizer learning rate
+
+# Time parameters
+time:
+  T: 1.0                  # Terminal time
+  T_tilde: 0.99           # Evaluation time t̃_{i+1} = t_{i+1} - ξ (Eq. after Alg. 1)
+  # ξ = T - T_tilde = 0.01 for numerical stability at interval endpoints
+
+# Network architecture (Appendix B)
+network:
+  d_model: 128            # Latent dimension for all embeddings
+  n_heads: 16             # Number of attention heads in transformer encoder
+  n_encoder_layers: 1     # Encoder-only transformer layers
+  activation: "silu"      # SiLU activation (Appendix B)
+  dropout: 0.0            # No dropout mentioned in paper
+
+# Euler-Maruyama sampling
+sampling:
+  N_pi: 50                # Number of discretization steps for SDE simulation
+
+# SBB parameters
+sbb:
+  beta: 10.0              # Default β - should satisfy β * Δt > 1 for all intervals
+  # For T=1 and n=252 intervals: Δt ≈ 0.004, so β > 250 is safe
+  # For fewer intervals, smaller β can be used
+
+# Optimizer
+optimizer:
+  name: "adam"
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  weight_decay: 0.0
+
+# Heston benchmark parameters (Table 3, Appendix C.1)
+heston:
+  kappa_range: [0.5, 4.0]    # Mean reversion speed
+  theta_range: [0.5, 1.5]    # Long-term variance
+  xi_range: [0.1, 0.9]       # Vol of vol
+  rho_range: [-0.9, 0.9]     # Correlation
+  r_range: [0.01, 0.1]       # Risk-free rate
+  n_trajectories: 5000       # Training trajectories
+  trajectory_length: 252     # Daily observations for 1 year
+
+# S&P 500 benchmark parameters (Appendix C.2.4)
+sp500:
+  n_pca_components: 16       # PCA dimension reduction
+  n_clusters: 3              # K-means clusters for factors
+  augmentation_factor: 200   # Synthetic data multiplier (Table 1)
+  context_length: 22         # TabICL context window (days)
+  lookback_window: 252       # Maximum lookback for features
+
+# Metrics (Table 4)
+metrics:
+  var_levels: [0.95, 0.99]   # VaR confidence levels
+  es_levels: [0.95, 0.99]    # Expected Shortfall confidence levels
+  annualization_factor: 252  # Trading days per year for Sharpe ratio
