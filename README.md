@@ -46,6 +46,37 @@ model.save("sbbts_spx.pt")
 
 ---
 
+## How it works
+
+Most generative models for time series either fix volatility (standard Schrödinger bridges
+set σ = I) or ignore drift (martingale transport). SBBTS fixes both at once by constructing
+a diffusion process whose drift *and* volatility are jointly calibrated to the target data.
+
+The key idea is the **Schrödinger-Bass bridge**: a stochastic process that is pinned at
+both endpoints of each time interval and whose law matches a target measure. SBBTS decomposes
+the full path-space problem into a sequence of these interval-level transport problems,
+which makes training tractable — each one is solved by a small score network rather than a
+single monolithic model over the whole trajectory.
+
+Training runs `n_steps` outer iterations (K in the paper). Each iteration refines the
+approximation: the score network for iteration k is trained against the transport measure
+produced by iteration k−1, tightening the fit to the real distribution round by round.
+This is why `n_steps` is the primary lever for temporal structure — one iteration captures
+marginals well; more iterations progressively sharpen volatility clustering and cross-lag
+correlations.
+
+At sampling time, the model draws a Gaussian initial state, maps it into the learned latent
+space via the transport map, then runs `n_euler_steps` Euler-Maruyama steps through the
+fitted SDE to produce a full synthetic path. The stored normalization (fitted on training
+data) is inverted at the end, so outputs are always in the original return scale.
+
+One subtlety worth knowing: financial log returns live at scale ~0.01 while the internal
+sampler draws from N(0,1). Without `normalize_input=True` these are 100× apart and training
+fails silently — the loss decreases but the generated paths have completely wrong scale.
+The flag is on by default and should stay on unless your data is already standardized.
+
+---
+
 ## Data requirements
 
 | Variable | What it is | Minimum | Recommended |
@@ -154,6 +185,36 @@ K=5: 0.24 → 0.22   ← converged (oscillations = noise)
 **Good final loss** for T=252: 0.1–0.3. If it stays above 1.0 after K=5, you need more data.
 **Loss flat from epoch 1**: learning rate too high, reduce by 3–10×.
 **Loss oscillates wildly**: try `grad_clip=1.0`.
+
+---
+
+## Tuning hyperparameters
+
+Start from the Lite or Full config above. When results are not satisfactory, use this table to decide what to change:
+
+| Symptom | Parameter to change | Direction |
+|---|---|---|
+| Volatility clustering (ACF of \|r\|) too weak | `n_steps` | Increase (3 → 5 → 8) |
+| Wrong volatility level — std ratio off | `normalize_input` | Must be `True`; also check data scale |
+| TSTR ratio > 1.1 — model can't substitute real data | `N_windows` (more data) or `n_epochs` | More data first, then more epochs |
+| Fat tails not captured | `N_windows` or `d_model` | More data first; wider model second |
+| Loss flat from epoch 1 | `learning_rate` | Reduce 3–10× (e.g. 1e-3 → 1e-4) |
+| Loss spikes or NaN mid-training | `grad_clip` | Set to `1.0` (or lower) |
+| Overfitting — loss drops then rises | `early_stopping_patience` | Set to 50–100 |
+| Sampling artifacts / jagged paths | `n_euler_steps` | Increase (50 → 100) |
+| Training too slow on CPU | `d_model`, `n_heads`, `n_epochs` | Use Lite config; switch to GPU |
+
+**Which parameters matter most for quality (in order):**
+
+1. `N_windows` — more training windows beats everything else
+2. `n_steps` — the single biggest lever for temporal dynamics (volatility clustering, leverage)
+3. `beta` — always use `suggest_beta()`; do not hand-tune unless you understand Theorem 3.2
+4. `n_epochs` — 1000 is the paper default; 300 is enough to validate the pipeline
+5. `d_model` / `n_heads` — network capacity; only matters once data is sufficient
+6. `n_euler_steps` — affects sample quality, not training; 50 is fine, 100 if paths look jagged
+
+`t_tilde_offset` (numerical safeguard near the terminal time of each bridge interval) and
+`val_fraction` (validation split for early stopping) rarely need to change from their defaults.
 
 ---
 
