@@ -158,7 +158,9 @@ def sample_brownian_bridge_batch(
             y_start_exp.reshape(-1, y_start.shape[-1]),
             y_end_exp.reshape(-1, y_end.shape[-1]),
             t.reshape(-1),
-            t_i, t_i1, generator
+            t_i,
+            t_i1,
+            generator,
         ).reshape(batch_size, n_samples, -1)
 
     return t, y_t

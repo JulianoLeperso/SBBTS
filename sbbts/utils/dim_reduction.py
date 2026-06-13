@@ -17,10 +17,10 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
 
-
 # ---------------------------------------------------------------------------
 # Marchenko-Pastur threshold
 # ---------------------------------------------------------------------------
+
 
 def marchenko_pastur_n_components(X_flat: np.ndarray) -> int:
     """
@@ -276,7 +276,7 @@ class ResidualModeler:
 
         for d in range(self._n_dims):
             gmm = GaussianMixture(n_components=self.n_components, random_state=42)
-            gmm.fit(residuals[:, d:d+1])
+            gmm.fit(residuals[:, d : d + 1])
             self.gmms.append(gmm)
 
         self._fitted = True
@@ -400,7 +400,11 @@ class PCAKMeansReducer:
 
         X_factor = self.pca_reducer.inverse_transform(X_reduced)
 
-        if self.model_residuals and self.residual_modeler is not None and self.residual_modeler._fitted:
+        if (
+            self.model_residuals
+            and self.residual_modeler is not None
+            and self.residual_modeler._fitted
+        ):
             N, T, d = X_factor.shape
             # Sample per-asset GMM residuals (captures heavy tails and bimodality)
             residuals = self.residual_modeler.sample(N * T).reshape(N, T, d)

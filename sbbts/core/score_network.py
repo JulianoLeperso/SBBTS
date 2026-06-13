@@ -217,7 +217,7 @@ class ScoreNetworkWrapper(nn.Module):
             context = self._cached_contexts[:, interval_idx, :]
             return self.score_net.forward_with_context(t, y_t, context)
         elif trajectory is not None:
-            return self.score_net(t, y_t, trajectory[:, :interval_idx + 1, :])
+            return self.score_net(t, y_t, trajectory[:, : interval_idx + 1, :])
         else:
             raise ValueError("Either cached_contexts or trajectory must be provided")
 

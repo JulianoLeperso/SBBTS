@@ -63,6 +63,7 @@ def init_distributed(backend: str = "nccl") -> int:
         local_rank (int) — which GPU this process owns
     """
     import os
+
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     if not dist.is_initialized():
         dist.init_process_group(backend=backend)
@@ -176,7 +177,9 @@ class SBBTS(nn.Module):
         if beta <= 0:
             raise ValueError(f"β must be positive, got {beta}")
         if encoder_type not in ("transformer", "signature"):
-            raise ValueError(f"encoder_type must be 'transformer' or 'signature', got {encoder_type!r}")
+            raise ValueError(
+                f"encoder_type must be 'transformer' or 'signature', got {encoder_type!r}"
+            )
 
         self.beta = beta
         self.n_steps = n_steps
@@ -204,16 +207,19 @@ class SBBTS(nn.Module):
         self.normalize_input = normalize_input
         # Filled by fit(); used to denormalise sample() output
         self._train_mean: Optional[Tensor] = None
-        self._train_std:  Optional[Tensor] = None
+        self._train_std: Optional[Tensor] = None
 
         if log_dir is not None and logger is None:
             from sbbts.utils.logger import SBBTSLogger
+
             logger = SBBTSLogger(base_dir=log_dir)
         self.logger = logger
 
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        ) if device is None else torch.device(device)
+        self.device = (
+            torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            if device is None
+            else torch.device(device)
+        )
 
         self.score_net: Optional[ScoreNetwork] = None
         self.inverse_net: Optional[InverseNet] = None
@@ -290,6 +296,7 @@ class SBBTS(nn.Module):
         if self.encoder_type == "signature":
             from sbbts.core.score_network import ScoreNetwork as SN
             from sbbts.nn.encoder import TrajectoryEncoder
+
             # Build ScoreNetwork but swap encoder
             self.score_net = create_score_network(
                 input_dim=input_dim,
@@ -391,8 +398,8 @@ class SBBTS(nn.Module):
         n_intervals = n_points - 1
         device, dtype = batch.device, batch.dtype
 
-        x_ti  = batch[:, :-1, :]    # (B, N, d)
-        x_ti1 = batch[:, 1:,  :]    # (B, N, d)
+        x_ti = batch[:, :-1, :]  # (B, N, d)
+        x_ti1 = batch[:, 1:, :]  # (B, N, d)
 
         # Encode all causal prefix contexts in one pass
         contexts = self.score_net.encode_all_prefixes(batch, covariates=covariates)
@@ -400,17 +407,17 @@ class SBBTS(nn.Module):
         # Normalised bridge duration — same for every interval, matching original repo.
         # safe_s keeps s strictly below T_bridge so the denominator never reaches 0.
         T_bridge = 1.0
-        safe_s   = self.t_tilde_offset          # default 0.01, same role as original safe_t
+        safe_s = self.t_tilde_offset  # default 0.01, same role as original safe_t
 
         # Transport X → Y at bridge-time s=0 (start) and s≈T_bridge (end).
         # The score network receives s ∈ [0, T_bridge], not actual calendar time.
         s_start = torch.zeros(batch_size, n_intervals, device=device, dtype=dtype)
-        s_end   = torch.full ((batch_size, n_intervals), T_bridge - safe_s, device=device, dtype=dtype)
+        s_end = torch.full((batch_size, n_intervals), T_bridge - safe_s, device=device, dtype=dtype)
 
-        score_at_start = self.score_net.forward_batched(s_start, x_ti,  contexts)
-        score_at_end   = self.score_net.forward_batched(s_end,   x_ti1, contexts)
-        y_ti  = x_ti  - score_at_start / self.beta
-        y_ti1 = x_ti1 - score_at_end   / self.beta
+        score_at_start = self.score_net.forward_batched(s_start, x_ti, contexts)
+        score_at_end = self.score_net.forward_batched(s_end, x_ti1, contexts)
+        y_ti = x_ti - score_at_start / self.beta
+        y_ti1 = x_ti1 - score_at_end / self.beta
 
         # Sample bridge time s ~ U[0, T_bridge - safe_s)
         s = torch.rand(batch_size, n_intervals, device=device, dtype=dtype) * (T_bridge - safe_s)
@@ -418,13 +425,13 @@ class SBBTS(nn.Module):
         # Brownian bridge from y_ti to y_ti1 at normalised time s:
         #   mean = (1 - s/T) y_ti + (s/T) y_ti1
         #   std  = sqrt(s (1 - s/T))          ← same formula as original get_loss
-        alpha       = (s / T_bridge).unsqueeze(-1)
+        alpha = (s / T_bridge).unsqueeze(-1)
         bridge_mean = (1.0 - alpha) * y_ti + alpha * y_ti1
-        bridge_std  = torch.sqrt((s * (1.0 - s / T_bridge)).clamp(min=0.0)).unsqueeze(-1)
+        bridge_std = torch.sqrt((s * (1.0 - s / T_bridge)).clamp(min=0.0)).unsqueeze(-1)
         y_s = bridge_mean + bridge_std * torch.randn_like(bridge_mean)
 
         # Score-matching target: (y_ti1 - y_s) / (T_bridge - s)
-        denom  = (T_bridge - s).clamp(min=safe_s).unsqueeze(-1)
+        denom = (T_bridge - s).clamp(min=safe_s).unsqueeze(-1)
         target = (y_ti1 - y_s) / denom
 
         score_pred = self.score_net.forward_batched(s, y_s, contexts)
@@ -453,8 +460,8 @@ class SBBTS(nn.Module):
             score_ti1 = self.score_net.forward_batched(t_i1, x_ti1, contexts)
             y_ti = x_ti - score_ti / self.beta
             y_ti1 = x_ti1 - score_ti1 / self.beta
-            target_ti = x_ti - y_ti        # = (1/β) score_ti
-            target_ti1 = x_ti1 - y_ti1    # = (1/β) score_ti1
+            target_ti = x_ti - y_ti  # = (1/β) score_ti
+            target_ti1 = x_ti1 - y_ti1  # = (1/β) score_ti1
 
         pred_ti = self.inverse_net.forward_batched(t_i.unsqueeze(0).expand(batch_size, -1), y_ti)
         pred_ti1 = self.inverse_net.forward_batched(t_i1.unsqueeze(0).expand(batch_size, -1), y_ti1)
@@ -508,12 +515,20 @@ class SBBTS(nn.Module):
         if self.logger is not None and hasattr(self.logger, "section"):
             self.logger.section("SBBTS Model Configuration")
             self.logger.write(f"  beta={self.beta}  n_steps={self.n_steps}")
-            self.logger.write(f"  d_model={self.d_model}  n_heads={self.n_heads}  n_encoder_layers={self.n_encoder_layers}")
-            self.logger.write(f"  n_epochs={self.n_epochs}  batch_size={self.batch_size}  lr={self.learning_rate}")
+            self.logger.write(
+                f"  d_model={self.d_model}  n_heads={self.n_heads}  n_encoder_layers={self.n_encoder_layers}"
+            )
+            self.logger.write(
+                f"  n_epochs={self.n_epochs}  batch_size={self.batch_size}  lr={self.learning_rate}"
+            )
             self.logger.write(f"  n_euler_steps={self.n_euler_steps}  device={self.device}")
-            self.logger.write(f"  n_samples={n_samples}  n_time_points={n_time_points}  d={input_dim}")
+            self.logger.write(
+                f"  n_samples={n_samples}  n_time_points={n_time_points}  d={input_dim}"
+            )
             self.logger.write(f"  low_beta_mode={self._is_low_beta}")
-            self.logger.write(f"  normalize_input={self.normalize_input}  grad_clip={self.grad_clip}")
+            self.logger.write(
+                f"  normalize_input={self.normalize_input}  grad_clip={self.grad_clip}"
+            )
 
         # Per-feature normalisation over the (N, T) axes.
         # Financial log-returns have std ~0.01 while the sampling initialisation
@@ -521,8 +536,8 @@ class SBBTS(nn.Module):
         # network from converging and causes gradient norms in the thousands.
         # Normalising to unit-std makes x and Y_0 live on the same scale.
         if self.normalize_input:
-            self._train_mean = X.mean(dim=(0, 1), keepdim=True)           # (1, 1, d)
-            self._train_std  = X.std( dim=(0, 1), keepdim=True).clamp(min=1e-8)
+            self._train_mean = X.mean(dim=(0, 1), keepdim=True)  # (1, 1, d)
+            self._train_std = X.std(dim=(0, 1), keepdim=True).clamp(min=1e-8)
             X = (X - self._train_mean) / self._train_std
             if self.logger is not None and hasattr(self.logger, "write"):
                 _m = self._train_mean.squeeze().tolist()
@@ -530,7 +545,11 @@ class SBBTS(nn.Module):
                 self.logger.write(f"  train_mean={_m}  train_std={_s}")
 
         if self.dim_reducer is not None:
-            X = torch.from_numpy(self.dim_reducer.fit_transform(X.cpu().numpy())).float().to(self.device)
+            X = (
+                torch.from_numpy(self.dim_reducer.fit_transform(X.cpu().numpy()))
+                .float()
+                .to(self.device)
+            )
             input_dim = X.shape[-1]
 
         self._init_score_network(input_dim)
@@ -550,7 +569,9 @@ class SBBTS(nn.Module):
                 _ddp_kwargs["device_ids"] = [self.device.index or 0]
             self.score_net = nn.parallel.DistributedDataParallel(self.score_net, **_ddp_kwargs)
             if self._is_low_beta and self.inverse_net is not None:
-                self.inverse_net = nn.parallel.DistributedDataParallel(self.inverse_net, **_ddp_kwargs)
+                self.inverse_net = nn.parallel.DistributedDataParallel(
+                    self.inverse_net, **_ddp_kwargs
+                )
 
         # Validation split for early stopping (rank-0 only; others skip ES)
         use_es = self.early_stopping_patience > 0 and _is_rank0
@@ -576,7 +597,9 @@ class SBBTS(nn.Module):
         scaler = torch.amp.GradScaler("cuda", enabled=use_amp_flag)
         inv_scaler = torch.amp.GradScaler("cuda", enabled=use_amp_flag) if inv_optimizer else None
 
-        train_dataset = TensorDataset(X_train) if cov_train is None else TensorDataset(X_train, cov_train)
+        train_dataset = (
+            TensorDataset(X_train) if cov_train is None else TensorDataset(X_train, cov_train)
+        )
 
         if _dist:
             # Each rank sees a disjoint shard; effective batch = batch_size × world_size
@@ -586,7 +609,9 @@ class SBBTS(nn.Module):
             dataloader = DataLoader(train_dataset, batch_size=self.batch_size, sampler=sampler)
         else:
             sampler = None
-            dataloader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)
+            dataloader = DataLoader(
+                train_dataset, batch_size=self.batch_size, shuffle=True, drop_last=True
+            )
 
         early_stopper = EarlyStopping(patience=self.early_stopping_patience) if use_es else None
 
@@ -596,20 +621,25 @@ class SBBTS(nn.Module):
         import time as _time
 
         for k in range(resume_from_step, self.n_steps):
-            _step_t0      = _time.perf_counter()
-            _step_losses:    list = []
+            _step_t0 = _time.perf_counter()
+            _step_losses: list = []
             _step_gradnorms: list = []
 
             if log_verbose:
-                print(f"\n=== Outer iteration k={k+1}/{self.n_steps}"
-                      + (f" [{_world} GPUs]" if _dist else "") + " ===")
+                print(
+                    f"\n=== Outer iteration k={k+1}/{self.n_steps}"
+                    + (f" [{_world} GPUs]" if _dist else "")
+                    + " ==="
+                )
             if self.logger is not None and hasattr(self.logger, "section"):
                 self.logger.section(f"Outer Iteration k={k+1}/{self.n_steps} — Training")
 
             if sampler is not None:
                 sampler.set_epoch(k)  # ensures different shuffles across epochs in DDP
 
-            epoch_iter = tqdm(range(self.n_epochs), desc=f"K={k+1}") if log_verbose else range(self.n_epochs)
+            epoch_iter = (
+                tqdm(range(self.n_epochs), desc=f"K={k+1}") if log_verbose else range(self.n_epochs)
+            )
 
             for epoch in epoch_iter:
                 epoch_loss = 0.0
@@ -622,8 +652,11 @@ class SBBTS(nn.Module):
                     optimizer.zero_grad(set_to_none=True)
 
                     ctx = (
-                        torch.amp.autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=use_amp_flag)
-                        if use_amp_flag else nullcontext()
+                        torch.amp.autocast(
+                            device_type=self.device.type, dtype=self.amp_dtype, enabled=use_amp_flag
+                        )
+                        if use_amp_flag
+                        else nullcontext()
                     )
                     with ctx:
                         loss = self._compute_training_loss(batch, self.time_points, cov_batch)
@@ -631,7 +664,9 @@ class SBBTS(nn.Module):
                     scaler.scale(loss).backward()
                     if self.grad_clip > 0.0:
                         scaler.unscale_(optimizer)
-                        gnorm = float(nn.utils.clip_grad_norm_(self.score_net.parameters(), self.grad_clip))
+                        gnorm = float(
+                            nn.utils.clip_grad_norm_(self.score_net.parameters(), self.grad_clip)
+                        )
                         epoch_max_gnorm = max(epoch_max_gnorm, gnorm)
                     scaler.step(optimizer)
                     scaler.update()
@@ -645,7 +680,9 @@ class SBBTS(nn.Module):
                     _step_gradnorms.append(epoch_max_gnorm)
 
                 if log_verbose and (epoch + 1) % 100 == 0:
-                    tqdm.write(f"  Epoch {epoch+1}: train_loss = {avg_loss:.6f}  grad_norm_max = {epoch_max_gnorm:.4f}")
+                    tqdm.write(
+                        f"  Epoch {epoch+1}: train_loss = {avg_loss:.6f}  grad_norm_max = {epoch_max_gnorm:.4f}"
+                    )
 
                 if _is_rank0 and self.logger is not None:
                     entry = {"outer_step": k + 1, "epoch": epoch + 1, "train_loss": avg_loss}
@@ -657,7 +694,9 @@ class SBBTS(nn.Module):
                 if use_es and early_stopper is not None:
                     _underlying = self.score_net.module if _dist else self.score_net
                     with torch.no_grad():
-                        val_loss = self._compute_training_loss(X_val, self.time_points, cov_val).item()
+                        val_loss = self._compute_training_loss(
+                            X_val, self.time_points, cov_val
+                        ).item()
                     _stop = early_stopper(val_loss, _underlying)
                     if _dist:
                         _flag = torch.tensor(int(_stop), device=self.device)
@@ -665,7 +704,9 @@ class SBBTS(nn.Module):
                         _stop = bool(_flag.item())
                     if _stop:
                         if log_verbose:
-                            tqdm.write(f"  Early stopping at epoch {epoch+1} (best val={early_stopper.best_loss:.6f})")
+                            tqdm.write(
+                                f"  Early stopping at epoch {epoch+1} (best val={early_stopper.best_loss:.6f})"
+                            )
                         if _is_rank0:
                             early_stopper.load_best_weights(_underlying)
                         if _dist:
@@ -681,7 +722,8 @@ class SBBTS(nn.Module):
 
                 inv_iter = (
                     tqdm(range(self.n_inverse_epochs), desc="InvNet", leave=False)
-                    if log_verbose else range(self.n_inverse_epochs)
+                    if log_verbose
+                    else range(self.n_inverse_epochs)
                 )
                 for _ in inv_iter:
                     if sampler is not None:
@@ -690,8 +732,13 @@ class SBBTS(nn.Module):
                         batch = items[0]
                         inv_optimizer.zero_grad(set_to_none=True)
                         ctx = (
-                            torch.amp.autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=use_amp_flag)
-                            if use_amp_flag else nullcontext()
+                            torch.amp.autocast(
+                                device_type=self.device.type,
+                                dtype=self.amp_dtype,
+                                enabled=use_amp_flag,
+                            )
+                            if use_amp_flag
+                            else nullcontext()
                         )
                         with ctx:
                             inv_loss = self._compute_inverse_loss(batch, self.time_points)
@@ -703,7 +750,11 @@ class SBBTS(nn.Module):
                 early_stopper.reset()
 
             # Write per-step convergence summary to diagnostics.log
-            if _is_rank0 and self.logger is not None and hasattr(self.logger, "summarize_outer_step"):
+            if (
+                _is_rank0
+                and self.logger is not None
+                and hasattr(self.logger, "summarize_outer_step")
+            ):
                 _step_elapsed = _time.perf_counter() - _step_t0
                 self.logger.summarize_outer_step(
                     k=k + 1,
@@ -780,19 +831,21 @@ class SBBTS(nn.Module):
 
             # Each interval uses normalised bridge time s ∈ [0, T_bridge=1],
             # matching the training loss.  dt_bridge is the same for every interval.
-            _T_bridge  = 1.0
-            _safe_s    = self.t_tilde_offset
-            _dt_bridge = _T_bridge / self.n_euler_steps   # e.g. 1/50 = 0.02
+            _T_bridge = 1.0
+            _safe_s = self.t_tilde_offset
+            _dt_bridge = _T_bridge / self.n_euler_steps  # e.g. 1/50 = 0.02
 
             for i in range(n_intervals):
                 # Euler-Maruyama in normalised bridge time s: 0 → T_bridge
                 for step in range(self.n_euler_steps):
-                    s_cur    = step * _dt_bridge
+                    s_cur = step * _dt_bridge
                     s_tensor = torch.full((n,), s_cur, device=self.device)
-                    drift    = self.score_net.forward_with_context(s_tensor, y_current, context)
-                    y_current = (y_current
-                                 + drift * _dt_bridge
-                                 + torch.randn_like(y_current) * math.sqrt(_dt_bridge))
+                    drift = self.score_net.forward_with_context(s_tensor, y_current, context)
+                    y_current = (
+                        y_current
+                        + drift * _dt_bridge
+                        + torch.randn_like(y_current) * math.sqrt(_dt_bridge)
+                    )
 
                 # Recover X from Y at bridge-time s ≈ T_bridge
                 s_end_tensor = torch.full((n,), _T_bridge - _safe_s, device=self.device)
@@ -800,15 +853,19 @@ class SBBTS(nn.Module):
                     correction = self.inverse_net(s_end_tensor, y_current)
                     x_ti1 = y_current + correction
                 else:
-                    score_at_end = self.score_net.forward_with_context(s_end_tensor, y_current, context)
+                    score_at_end = self.score_net.forward_with_context(
+                        s_end_tensor, y_current, context
+                    )
                     x_ti1 = y_to_x(y_current, score_at_end, self.beta)
 
                 trajectory[:, i + 1, :] = x_ti1
 
                 # Update context for next interval
                 if i < n_intervals - 1:
-                    cov_so_far = covariates[:, :i + 2, :] if covariates is not None else None
-                    context = self.score_net.encode_trajectory(trajectory[:, :i + 2, :], covariates=cov_so_far)
+                    cov_so_far = covariates[:, : i + 2, :] if covariates is not None else None
+                    context = self.score_net.encode_trajectory(
+                        trajectory[:, : i + 2, :], covariates=cov_so_far
+                    )
 
                 # Periodic memory cleanup for long rollouts
                 if (i + 1) % _MEMORY_CLEANUP_INTERVAL == 0 and self.device.type == "cuda":
@@ -859,14 +916,12 @@ class SBBTS(nn.Module):
         X_prefix = X_prefix.to(self.device)
 
         if X_prefix.dim() == 2:
-            X_prefix = X_prefix.unsqueeze(0)   # (1, T_prefix, d)
+            X_prefix = X_prefix.unsqueeze(0)  # (1, T_prefix, d)
 
         T_prefix = X_prefix.shape[1]
         n_points = len(self.time_points)
         if T_prefix >= n_points:
-            raise ValueError(
-                f"prefix length {T_prefix} must be shorter than T={n_points}"
-            )
+            raise ValueError(f"prefix length {T_prefix} must be shorter than T={n_points}")
 
         self.score_net.eval()
         if self.inverse_net is not None:
@@ -881,8 +936,8 @@ class SBBTS(nn.Module):
             prefix_batch = X_prefix.expand(n, -1, -1).clone()
 
             n_intervals = n_points - 1
-            _T_bridge  = 1.0
-            _safe_s    = self.t_tilde_offset
+            _T_bridge = 1.0
+            _safe_s = self.t_tilde_offset
             _dt_bridge = _T_bridge / self.n_euler_steps
 
             trajectory = torch.zeros(n, n_points, self.input_dim, device=self.device)
@@ -899,25 +954,30 @@ class SBBTS(nn.Module):
 
             for i in range(T_prefix - 1, n_intervals):
                 for step in range(self.n_euler_steps):
-                    s_cur    = step * _dt_bridge
+                    s_cur = step * _dt_bridge
                     s_tensor = torch.full((n,), s_cur, device=self.device)
-                    drift    = self.score_net.forward_with_context(s_tensor, y_current, context)
-                    y_current = (y_current
-                                 + drift * _dt_bridge
-                                 + torch.randn_like(y_current) * math.sqrt(_dt_bridge))
+                    drift = self.score_net.forward_with_context(s_tensor, y_current, context)
+                    y_current = (
+                        y_current
+                        + drift * _dt_bridge
+                        + torch.randn_like(y_current) * math.sqrt(_dt_bridge)
+                    )
 
                 s_end_tensor = torch.full((n,), _T_bridge - _safe_s, device=self.device)
                 if self._is_low_beta and self.inverse_net is not None:
                     x_ti1 = y_current + self.inverse_net(s_end_tensor, y_current)
                 else:
                     from sbbts.transport.transport_map import y_to_x
-                    score_at_end = self.score_net.forward_with_context(s_end_tensor, y_current, context)
+
+                    score_at_end = self.score_net.forward_with_context(
+                        s_end_tensor, y_current, context
+                    )
                     x_ti1 = y_to_x(y_current, score_at_end, self.beta)
 
                 trajectory[:, i + 1, :] = x_ti1
 
                 if i < n_intervals - 1:
-                    context = self.score_net.encode_trajectory(trajectory[:, :i + 2, :])
+                    context = self.score_net.encode_trajectory(trajectory[:, : i + 2, :])
 
                 if (i + 1) % _MEMORY_CLEANUP_INTERVAL == 0 and self.device.type == "cuda":
                     gc.collect()
@@ -1114,7 +1174,7 @@ class SBBTS(nn.Module):
             "time_points": self.time_points,
             "fitted": self._fitted,
             "train_mean": self._train_mean,
-            "train_std":  self._train_std,
+            "train_std": self._train_std,
         }
         torch.save(checkpoint, path)
 
@@ -1152,7 +1212,7 @@ class SBBTS(nn.Module):
 
         model._is_low_beta = cfg.get("is_low_beta", False)
         model._train_mean = checkpoint.get("train_mean")
-        model._train_std  = checkpoint.get("train_std")
+        model._train_std = checkpoint.get("train_std")
 
         if cfg["input_dim"] is not None:
             model._init_score_network(cfg["input_dim"])

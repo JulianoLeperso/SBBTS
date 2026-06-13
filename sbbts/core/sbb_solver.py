@@ -146,7 +146,7 @@ class DSBDynamics:
         t_tensor = torch.tensor(t, device=y.device, dtype=y.dtype)
         drift = self.score_fn(t_tensor.expand(y.shape[0]), y, context)
 
-        noise = torch.randn_like(y, generator=generator) * (self.dt ** 0.5)
+        noise = torch.randn_like(y, generator=generator) * (self.dt**0.5)
 
         return y + drift * self.dt + noise
 
@@ -180,7 +180,7 @@ class DSBDynamics:
         for _ in range(n_steps):
             t_tensor = torch.tensor(t, device=y.device, dtype=y.dtype)
             drift = self.score_fn(t_tensor.expand(y.shape[0]), y, context)
-            noise = torch.randn_like(y, generator=generator) * (actual_dt ** 0.5)
+            noise = torch.randn_like(y, generator=generator) * (actual_dt**0.5)
             y = y + drift * actual_dt + noise
             t = t + actual_dt
 

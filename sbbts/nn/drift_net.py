@@ -94,10 +94,9 @@ class SinusoidalTimeEmbedding(nn.Module):
         embedding = torch.cat([torch.sin(args), torch.cos(args)], dim=-1)
 
         if embedding.shape[-1] < self.d_model:
-            embedding = torch.cat([
-                embedding,
-                torch.zeros(*embedding.shape[:-1], 1, device=embedding.device)
-            ], dim=-1)
+            embedding = torch.cat(
+                [embedding, torch.zeros(*embedding.shape[:-1], 1, device=embedding.device)], dim=-1
+            )
 
         return embedding
 

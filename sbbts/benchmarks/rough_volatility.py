@@ -23,12 +23,12 @@ import numpy as np
 class RoughHestonParams:
     """Parameters for the rough Heston model."""
 
-    H: float = 0.1       # Hurst exponent — roughness; H < 0.5 for rough volatility
-    kappa: float = 1.0   # Mean reversion speed
+    H: float = 0.1  # Hurst exponent — roughness; H < 0.5 for rough volatility
+    kappa: float = 1.0  # Mean reversion speed
     theta: float = 0.04  # Long-term variance
-    nu: float = 0.3      # Vol-of-vol
-    rho: float = -0.7    # Spot-vol correlation (typically negative for equity)
-    r: float = 0.02      # Risk-free rate
+    nu: float = 0.3  # Vol-of-vol
+    rho: float = -0.7  # Spot-vol correlation (typically negative for equity)
+    r: float = 0.02  # Risk-free rate
     V0: Optional[float] = None  # Initial variance (defaults to theta)
 
     def __post_init__(self):
@@ -110,7 +110,7 @@ def simulate_rough_heston(
     dW_H = np.diff(W_H, axis=1)  # (n_paths, n_steps)
 
     # Correlate: dW_vol = ρ*dW_S + sqrt(1-ρ²)*dW_H
-    dW_vol = params.rho * W_S + np.sqrt(max(1 - params.rho ** 2, 0.0)) * dW_H
+    dW_vol = params.rho * W_S + np.sqrt(max(1 - params.rho**2, 0.0)) * dW_H
 
     S = np.zeros((n_paths, n_steps + 1))
     V = np.zeros((n_paths, n_steps + 1))
@@ -121,9 +121,7 @@ def simulate_rough_heston(
         V_t = np.maximum(V[:, t], 0.0)
         sv = np.sqrt(V_t)
 
-        S[:, t + 1] = S[:, t] * np.exp(
-            (params.r - 0.5 * V_t) * dt + sv * W_S[:, t]
-        )
+        S[:, t + 1] = S[:, t] * np.exp((params.r - 0.5 * V_t) * dt + sv * W_S[:, t])
         V[:, t + 1] = np.maximum(
             V_t + params.kappa * (params.theta - V_t) * dt + params.nu * sv * dW_vol[:, t],
             0.0,

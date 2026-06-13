@@ -70,9 +70,7 @@ class TestSimulateHeston:
 
     @pytest.fixture
     def sample_params(self):
-        return HestonParams(
-            kappa=2.0, theta=0.8, xi=0.5, rho=-0.7, r=0.05
-        )
+        return HestonParams(kappa=2.0, theta=0.8, xi=0.5, rho=-0.7, r=0.05)
 
     def test_output_shape(self, sample_params):
         """Should return correct shape."""
@@ -102,9 +100,7 @@ class TestSimulateHestonLogReturns:
 
     @pytest.fixture
     def sample_params(self):
-        return HestonParams(
-            kappa=2.0, theta=0.8, xi=0.5, rho=-0.7, r=0.05
-        )
+        return HestonParams(kappa=2.0, theta=0.8, xi=0.5, rho=-0.7, r=0.05)
 
     def test_output_shape(self, sample_params):
         """Should return (n_paths, n_steps+1, 2)."""
@@ -149,9 +145,7 @@ class TestEstimateHestonMLE:
 
     def test_estimates_within_reasonable_range(self):
         """Estimated parameters should be in reasonable ranges."""
-        params = HestonParams(
-            kappa=2.0, theta=0.8, xi=0.5, rho=-0.5, r=0.05
-        )
+        params = HestonParams(kappa=2.0, theta=0.8, xi=0.5, rho=-0.5, r=0.05)
         traj = simulate_heston_log_returns(params, n_paths=1, n_steps=1000, seed=42)[0]
 
         est = estimate_heston_mle(traj)
@@ -164,9 +158,7 @@ class TestEstimateHestonMLE:
 
     def test_recovers_theta_approximately(self):
         """Should recover theta reasonably well."""
-        params = HestonParams(
-            kappa=2.0, theta=0.8, xi=0.3, rho=-0.3, r=0.05
-        )
+        params = HestonParams(kappa=2.0, theta=0.8, xi=0.3, rho=-0.3, r=0.05)
         traj = simulate_heston_log_returns(params, n_paths=1, n_steps=5000, seed=42)[0]
 
         est = estimate_heston_mle(traj)

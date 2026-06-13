@@ -76,7 +76,7 @@ class TestBrownianBridgeStd:
         t_mid = (t_i + t_i1) / 2
         std_mid = brownian_bridge_std(torch.tensor(t_mid), t_i, t_i1)
         expected_var_mid = (t_mid - t_i) * (t_i1 - t_mid) / dt
-        expected_std_mid = expected_var_mid ** 0.5
+        expected_std_mid = expected_var_mid**0.5
 
         assert std_mid.item() == pytest.approx(expected_std_mid, rel=1e-6)
 
@@ -89,7 +89,7 @@ class TestBrownianBridgeStd:
             t = torch.tensor(t_val)
             std = brownian_bridge_std(t, t_i, t_i1)
             expected_var = (t_val - t_i) * (t_i1 - t_val) / dt
-            expected_std = expected_var ** 0.5
+            expected_std = expected_var**0.5
 
             assert std.item() == pytest.approx(expected_std, rel=1e-6)
 
@@ -108,9 +108,7 @@ class TestSampleBrownianBridge:
 
         samples = sample_brownian_bridge(y_start, y_end, t, t_i, t_i1)
         empirical_mean = samples.mean(dim=0)
-        theoretical_mean = brownian_bridge_mean(
-            y_start[0:1], y_end[0:1], t, t_i, t_i1
-        ).squeeze()
+        theoretical_mean = brownian_bridge_mean(y_start[0:1], y_end[0:1], t, t_i, t_i1).squeeze()
 
         torch.testing.assert_close(empirical_mean, theoretical_mean, atol=0.05, rtol=0.05)
 

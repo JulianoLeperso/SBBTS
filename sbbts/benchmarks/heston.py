@@ -25,9 +25,11 @@ from scipy.optimize import minimize
 
 try:
     from numba import njit as _njit
+
     _HAS_NUMBA = True
 except ImportError:
     _HAS_NUMBA = False
+
     def _njit(func):  # no-op decorator when numba unavailable
         return func
 
@@ -35,11 +37,12 @@ except ImportError:
 @dataclass
 class HestonParams:
     """Heston model parameters."""
+
     kappa: float  # Mean reversion speed
     theta: float  # Long-term variance
-    xi: float     # Vol of vol
-    rho: float    # Correlation
-    r: float      # Risk-free rate
+    xi: float  # Vol of vol
+    rho: float  # Correlation
+    r: float  # Risk-free rate
     v0: float = None  # Initial variance (defaults to theta)
 
     def __post_init__(self):
@@ -92,7 +95,7 @@ def simulate_heston(
     params: HestonParams,
     n_paths: int,
     n_steps: int,
-    dt: float = 1/252,
+    dt: float = 1 / 252,
     S0: float = 100.0,
     return_variance: bool = True,
     seed: int = None,
@@ -119,7 +122,12 @@ def simulate_heston(
         np.random.seed(seed)
 
     kappa, theta, xi, rho, r, v0 = (
-        params.kappa, params.theta, params.xi, params.rho, params.r, params.v0
+        params.kappa,
+        params.theta,
+        params.xi,
+        params.rho,
+        params.r,
+        params.v0,
     )
 
     S = np.zeros((n_paths, n_steps + 1))
@@ -140,9 +148,7 @@ def simulate_heston(
         v_t = np.maximum(v[:, t], 0)
         sqrt_v = np.sqrt(v_t)
 
-        S[:, t + 1] = S[:, t] * np.exp(
-            (r - 0.5 * v_t) * dt + sqrt_v * sqrt_dt * W_X
-        )
+        S[:, t + 1] = S[:, t] * np.exp((r - 0.5 * v_t) * dt + sqrt_v * sqrt_dt * W_X)
 
         v[:, t + 1] = v_t + kappa * (theta - v_t) * dt + xi * sqrt_v * sqrt_dt * W_v
         v[:, t + 1] = np.maximum(v[:, t + 1], 0)
@@ -156,7 +162,7 @@ def simulate_heston_log_returns(
     params: HestonParams,
     n_paths: int,
     n_steps: int,
-    dt: float = 1/252,
+    dt: float = 1 / 252,
     seed: int = None,
 ) -> np.ndarray:
     """
@@ -220,8 +226,7 @@ def generate_heston_dataset(
 
     for i, params in enumerate(params_list):
         traj = simulate_heston_log_returns(
-            params, n_paths=1, n_steps=trajectory_length,
-            seed=seed + i if seed else None
+            params, n_paths=1, n_steps=trajectory_length, seed=seed + i if seed else None
         )
         trajectories[i] = traj[0]
 
@@ -238,17 +243,17 @@ def _heston_variance_nll(v: np.ndarray, kappa: float, theta: float, xi: float, d
     for t in range(len(v) - 1):
         v_t = max(v[t], 1e-10)
         mu_t = v_t + kappa * (theta - v_t) * dt
-        sigma_t = xi * (v_t ** 0.5) * (dt ** 0.5)
+        sigma_t = xi * (v_t**0.5) * (dt**0.5)
         if sigma_t < 1e-12:
             continue
         diff = v[t + 1] - mu_t
-        nll += 0.5 * (diff / sigma_t) ** 2 + 0.5 * np.log(2.0 * np.pi * sigma_t ** 2)
+        nll += 0.5 * (diff / sigma_t) ** 2 + 0.5 * np.log(2.0 * np.pi * sigma_t**2)
     return nll
 
 
 def estimate_heston_mle(
     trajectory: np.ndarray,
-    dt: float = 1/252,
+    dt: float = 1 / 252,
 ) -> HestonParams:
     """
     Estimate Heston parameters using Maximum Likelihood Estimation.

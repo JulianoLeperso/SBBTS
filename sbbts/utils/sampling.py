@@ -145,7 +145,7 @@ def generate_gbm(
     mu: float = 0.05,
     sigma: float = 0.2,
     S0: float = 100.0,
-    dt: float = 1/252,
+    dt: float = 1 / 252,
     return_log_prices: bool = True,
     device: torch.device = None,
     generator: torch.Generator = None,
@@ -233,7 +233,12 @@ class SDESampler:
             Samples from the SDE
         """
         return euler_maruyama_simulate(
-            x0, t_start, t_end, self.n_steps,
-            self.drift_fn, self.diffusion_fn,
-            return_trajectory, generator
+            x0,
+            t_start,
+            t_end,
+            self.n_steps,
+            self.drift_fn,
+            self.diffusion_fn,
+            return_trajectory,
+            generator,
         )

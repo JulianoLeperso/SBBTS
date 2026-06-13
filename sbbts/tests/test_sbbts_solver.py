@@ -19,7 +19,7 @@ def generate_gbm_trajectories(
     d: int = 1,
     mu: float = 0.05,
     sigma: float = 0.2,
-    dt: float = 1/252,
+    dt: float = 1 / 252,
     S0: float = 100.0,
 ) -> np.ndarray:
     """Generate Geometric Brownian Motion trajectories."""

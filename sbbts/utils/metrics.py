@@ -41,7 +41,11 @@ def compute_returns(
     if log_returns:
         returns = np.diff(np.log(prices), axis=-2 if prices.ndim > 1 else -1)
     else:
-        returns = np.diff(prices, axis=-2 if prices.ndim > 1 else -1) / prices[..., :-1, :] if prices.ndim > 2 else np.diff(prices) / prices[:-1]
+        returns = (
+            np.diff(prices, axis=-2 if prices.ndim > 1 else -1) / prices[..., :-1, :]
+            if prices.ndim > 2
+            else np.diff(prices) / prices[:-1]
+        )
 
     return returns
 
@@ -270,20 +274,20 @@ def compute_metrics(
         dict with keys  <metric>_real, <metric>_synth, <metric>_ratio
         for each stylized fact, plus raw scalar values.
     """
-    X_real  = to_numpy(X_real).astype(np.float64)
+    X_real = to_numpy(X_real).astype(np.float64)
     X_synth = to_numpy(X_synth).astype(np.float64)
 
     def _flatten(X):
         return X.reshape(-1)
 
     def _per_window_rv(X):
-        return np.sum(X ** 2, axis=1)          # (N, d) — realized variance per window
+        return np.sum(X**2, axis=1)  # (N, d) — realized variance per window
 
     def _acf_abs_sum(X, max_lag):
         r = _flatten(X)
         abs_r = np.abs(r)
         mean = abs_r.mean()
-        var  = abs_r.var()
+        var = abs_r.var()
         if var == 0:
             return 0.0
         total = 0.0
@@ -302,30 +306,33 @@ def compute_metrics(
         r = _flatten(X)
         if len(r) < window:
             return 0.0, 0.0
-        vols = [r[i:i+window].std(ddof=1) * np.sqrt(annualization_factor)
-                for i in range(len(r) - window + 1)]
+        vols = [
+            r[i : i + window].std(ddof=1) * np.sqrt(annualization_factor)
+            for i in range(len(r) - window + 1)
+        ]
         return float(np.mean(vols)), float(np.std(vols, ddof=1))
 
-    r_real  = _flatten(X_real)
+    r_real = _flatten(X_real)
     r_synth = _flatten(X_synth)
 
-    rv_real  = _per_window_rv(X_real).flatten()
+    rv_real = _per_window_rv(X_real).flatten()
     rv_synth = _per_window_rv(X_synth).flatten()
 
-    ann_std_real  = float(r_real.std(ddof=1)  * np.sqrt(annualization_factor))
+    ann_std_real = float(r_real.std(ddof=1) * np.sqrt(annualization_factor))
     ann_std_synth = float(r_synth.std(ddof=1) * np.sqrt(annualization_factor))
 
     from scipy.stats import kurtosis as _kurt
-    kurt_real  = float(_kurt(r_real,  fisher=True))
+
+    kurt_real = float(_kurt(r_real, fisher=True))
     kurt_synth = float(_kurt(r_synth, fisher=True))
 
-    acf_real  = _acf_abs_sum(X_real,  acf_lags)
+    acf_real = _acf_abs_sum(X_real, acf_lags)
     acf_synth = _acf_abs_sum(X_synth, acf_lags)
 
-    lev_real  = _leverage(X_real)
+    lev_real = _leverage(X_real)
     lev_synth = _leverage(X_synth)
 
-    rvol_mean_real,  rvol_std_real  = _rolling_vol(X_real)
+    rvol_mean_real, rvol_std_real = _rolling_vol(X_real)
     rvol_mean_synth, rvol_std_synth = _rolling_vol(X_synth)
 
     def _ratio(s, r):
@@ -333,33 +340,33 @@ def compute_metrics(
 
     return {
         # Annualised volatility
-        "ann_std_real":          ann_std_real,
-        "ann_std_synth":         ann_std_synth,
-        "ann_std_ratio":         _ratio(ann_std_synth, ann_std_real),
+        "ann_std_real": ann_std_real,
+        "ann_std_synth": ann_std_synth,
+        "ann_std_ratio": _ratio(ann_std_synth, ann_std_real),
         # Realised variance (mean and cross-window std)
-        "rv_mean_real":          float(rv_real.mean()),
-        "rv_mean_synth":         float(rv_synth.mean()),
-        "rv_mean_ratio":         _ratio(rv_synth.mean(), rv_real.mean()),
-        "rv_std_real":           float(rv_real.std(ddof=1)),
-        "rv_std_synth":          float(rv_synth.std(ddof=1)),
-        "rv_std_ratio":          _ratio(rv_synth.std(ddof=1), rv_real.std(ddof=1)),
+        "rv_mean_real": float(rv_real.mean()),
+        "rv_mean_synth": float(rv_synth.mean()),
+        "rv_mean_ratio": _ratio(rv_synth.mean(), rv_real.mean()),
+        "rv_std_real": float(rv_real.std(ddof=1)),
+        "rv_std_synth": float(rv_synth.std(ddof=1)),
+        "rv_std_ratio": _ratio(rv_synth.std(ddof=1), rv_real.std(ddof=1)),
         # Tail heaviness
-        "kurtosis_real":         kurt_real,
-        "kurtosis_synth":        kurt_synth,
-        "kurtosis_ratio":        _ratio(kurt_synth, kurt_real),
+        "kurtosis_real": kurt_real,
+        "kurtosis_synth": kurt_synth,
+        "kurtosis_ratio": _ratio(kurt_synth, kurt_real),
         # Volatility clustering (sum of ACF of |r| at lags 1..acf_lags)
-        "acf_abs_sum_real":      acf_real,
-        "acf_abs_sum_synth":     acf_synth,
-        "acf_abs_sum_ratio":     _ratio(acf_synth, acf_real),
+        "acf_abs_sum_real": acf_real,
+        "acf_abs_sum_synth": acf_synth,
+        "acf_abs_sum_ratio": _ratio(acf_synth, acf_real),
         # Leverage effect (k=1)
-        "leverage_k1_real":      lev_real,
-        "leverage_k1_synth":     lev_synth,
+        "leverage_k1_real": lev_real,
+        "leverage_k1_synth": lev_synth,
         # Rolling volatility
-        "rolling_vol_mean_real":  rvol_mean_real,
+        "rolling_vol_mean_real": rvol_mean_real,
         "rolling_vol_mean_synth": rvol_mean_synth,
         "rolling_vol_mean_ratio": _ratio(rvol_mean_synth, rvol_mean_real),
-        "rolling_vol_std_real":   rvol_std_real,
-        "rolling_vol_std_synth":  rvol_std_synth,
+        "rolling_vol_std_real": rvol_std_real,
+        "rolling_vol_std_synth": rvol_std_synth,
     }
 
 
@@ -392,7 +399,7 @@ def compute_tstr(
     except ImportError:
         raise ImportError("compute_tstr requires scikit-learn: pip install scikit-learn")
 
-    X_real  = to_numpy(X_real).astype(np.float32)
+    X_real = to_numpy(X_real).astype(np.float32)
     X_synth = to_numpy(X_synth).astype(np.float32)
     N, T, d = X_real.shape
     p = ar_order
@@ -401,31 +408,30 @@ def compute_tstr(
         N_, T_, d_ = X.shape
         feats, tgts = [], []
         for t in range(p, T_):
-            feats.append(X[:, t - p:t, :].reshape(N_, p * d_))
+            feats.append(X[:, t - p : t, :].reshape(N_, p * d_))
             tgts.append(X[:, t, :])
-        return (np.concatenate(feats, axis=0),
-                np.concatenate(tgts,  axis=0))
+        return (np.concatenate(feats, axis=0), np.concatenate(tgts, axis=0))
 
-    n_test  = max(1, int(N * test_fraction))
+    n_test = max(1, int(N * test_fraction))
     n_train = N - n_test
     X_real_train, X_real_test = X_real[:n_train], X_real[n_train:]
 
     feat_train_real, tgt_train_real = _make_ar_dataset(X_real_train)
-    feat_test,       tgt_test       = _make_ar_dataset(X_real_test)
-    feat_synth,      tgt_synth      = _make_ar_dataset(X_synth)
+    feat_test, tgt_test = _make_ar_dataset(X_real_test)
+    feat_synth, tgt_synth = _make_ar_dataset(X_synth)
 
-    model_real  = Ridge(alpha=1e-3).fit(feat_train_real, tgt_train_real)
-    model_synth = Ridge(alpha=1e-3).fit(feat_synth,      tgt_synth)
+    model_real = Ridge(alpha=1e-3).fit(feat_train_real, tgt_train_real)
+    model_synth = Ridge(alpha=1e-3).fit(feat_synth, tgt_synth)
 
-    trtr_mse = float(np.mean((model_real.predict(feat_test)  - tgt_test) ** 2))
+    trtr_mse = float(np.mean((model_real.predict(feat_test) - tgt_test) ** 2))
     tstr_mse = float(np.mean((model_synth.predict(feat_test) - tgt_test) ** 2))
 
     return {
-        "trtr_mse":      trtr_mse,
-        "tstr_mse":      tstr_mse,
-        "ratio":         tstr_mse / trtr_mse if trtr_mse > 0 else float("nan"),
-        "n_real_train":  n_train,
-        "n_real_test":   n_test,
+        "trtr_mse": trtr_mse,
+        "tstr_mse": tstr_mse,
+        "ratio": tstr_mse / trtr_mse if trtr_mse > 0 else float("nan"),
+        "n_real_train": n_train,
+        "n_real_test": n_test,
         "n_synth_train": len(X_synth),
     }
 
@@ -458,7 +464,4 @@ class MetricsTracker:
 
     def summary(self) -> dict:
         """Get summary of all metrics."""
-        return {
-            name: {"mean": self.mean(name), "std": self.std(name)}
-            for name in self.metrics
-        }
+        return {name: {"mean": self.mean(name), "std": self.std(name)} for name in self.metrics}

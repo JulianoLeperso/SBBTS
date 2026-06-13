@@ -59,11 +59,11 @@ class SBBTSLogger:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         self.epochs_path = self.run_dir / "training_epochs.log"
-        self.diag_path   = self.run_dir / "diagnostics.log"
-        self.log_path    = self.diag_path          # backward-compat alias
+        self.diag_path = self.run_dir / "diagnostics.log"
+        self.log_path = self.diag_path  # backward-compat alias
 
         self._ef = open(self.epochs_path, "w", encoding="utf-8", buffering=1)
-        self._df = open(self.diag_path,   "w", encoding="utf-8", buffering=1)
+        self._df = open(self.diag_path, "w", encoding="utf-8", buffering=1)
 
         self._write_headers(ts)
 
@@ -85,10 +85,7 @@ class SBBTSLogger:
 
     def log(self, data: dict) -> None:
         """Called by SBBTS training loop each epoch. Writes to training_epochs.log."""
-        parts = [
-            f"{k}={v:.6f}" if isinstance(v, float) else f"{k}={v}"
-            for k, v in data.items()
-        ]
+        parts = [f"{k}={v:.6f}" if isinstance(v, float) else f"{k}={v}" for k, v in data.items()]
         self._ef.write(f"[TRAIN] {' | '.join(parts)}\n")
 
     # ── diagnostics.log writers ───────────────────────────────────────────────
@@ -138,18 +135,18 @@ class SBBTSLogger:
         if not losses:
             return
 
-        n       = len(losses)
-        mean_l  = statistics.mean(losses)
+        n = len(losses)
+        mean_l = statistics.mean(losses)
         median_l = statistics.median(losses)
-        min_l   = min(losses)
-        max_l   = max(losses)
-        std_l   = statistics.stdev(losses) if n > 1 else 0.0
+        min_l = min(losses)
+        max_l = max(losses)
+        std_l = statistics.stdev(losses) if n > 1 else 0.0
 
         # Trend over first and last N epochs
-        window  = max(1, min(100, n // 5))
+        window = max(1, min(100, n // 5))
         first_w = statistics.mean(losses[:window])
-        last_w  = statistics.mean(losses[-window:])
-        trend   = last_w - first_w
+        last_w = statistics.mean(losses[-window:])
+        trend = last_w - first_w
 
         # Spike detection: counts epochs where loss > 3× mean or 10× minimum
         spike_thresh = max(3.0 * mean_l, min_l * 10.0)
@@ -173,10 +170,14 @@ class SBBTSLogger:
         self.section(f"Outer Step k={k}/{n_steps} — Convergence Report")
         self.write(f"  wall_time  : {elapsed_str}")
         self.write(f"  epochs     : {n}")
-        self.write(f"  loss stats : mean={mean_l:.4f}  median={median_l:.4f}  "
-                   f"min={min_l:.4f}  max={max_l:.4f}  std={std_l:.4f}")
-        self.write(f"  trend      : first-{window} avg={first_w:.4f}  "
-                   f"last-{window} avg={last_w:.4f}  delta={trend:+.4f}")
+        self.write(
+            f"  loss stats : mean={mean_l:.4f}  median={median_l:.4f}  "
+            f"min={min_l:.4f}  max={max_l:.4f}  std={std_l:.4f}"
+        )
+        self.write(
+            f"  trend      : first-{window} avg={first_w:.4f}  "
+            f"last-{window} avg={last_w:.4f}  delta={trend:+.4f}"
+        )
         self.write(f"  spikes (>{spike_thresh:.1f}): {n_spikes}  ({100*n_spikes/n:.1f}% of epochs)")
         self.write(f"  verdict    : {verdict}")
 
@@ -185,9 +186,11 @@ class SBBTSLogger:
             if gn:
                 clipped = sum(1 for g in gn if g > grad_clip)
                 clip_label = f"{grad_clip:.1f}" if grad_clip > 0 else "disabled"
-                self.write(f"  grad norms : mean={statistics.mean(gn):.4f}  "
-                           f"max={max(gn):.4f}  "
-                           f"clipped(>{clip_label})={clipped}/{len(gn)} ({100*clipped/len(gn):.1f}%)")
+                self.write(
+                    f"  grad norms : mean={statistics.mean(gn):.4f}  "
+                    f"max={max(gn):.4f}  "
+                    f"clipped(>{clip_label})={clipped}/{len(gn)} ({100*clipped/len(gn):.1f}%)"
+                )
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 

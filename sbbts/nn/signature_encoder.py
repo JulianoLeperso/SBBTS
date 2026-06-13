@@ -49,9 +49,9 @@ def _incremental_signatures(trajectory: Tensor, depth: int = 2) -> Tensor:
 
     # Level 1: sig1[i] = X_i - X_0, via cumsum of increments
     # Shape (B, T, d); sig1[:, 0, :] = 0 (empty prefix)
-    level1_steps = torch.cumsum(increments, dim=1)                     # (B, T-1, d)
+    level1_steps = torch.cumsum(increments, dim=1)  # (B, T-1, d)
     zeros_d = torch.zeros(B, 1, d, device=device, dtype=dtype)
-    level1 = torch.cat([zeros_d, level1_steps], dim=1)                 # (B, T, d)
+    level1 = torch.cat([zeros_d, level1_steps], dim=1)  # (B, T, d)
 
     if depth == 1:
         return level1
@@ -61,17 +61,17 @@ def _incremental_signatures(trajectory: Tensor, depth: int = 2) -> Tensor:
     outer = torch.einsum("bti,btj->btij", level1[:, :-1, :], increments)
 
     # Cumsum to get running iterated integral
-    level2_steps = torch.cumsum(outer, dim=1)                          # (B, T-1, d, d)
+    level2_steps = torch.cumsum(outer, dim=1)  # (B, T-1, d, d)
     zeros_dd = torch.zeros(B, 1, d, d, device=device, dtype=dtype)
-    level2 = torch.cat([zeros_dd, level2_steps], dim=1)               # (B, T, d, d)
-    level2_flat = level2.reshape(B, T, d * d)                          # (B, T, d²)
+    level2 = torch.cat([zeros_dd, level2_steps], dim=1)  # (B, T, d, d)
+    level2_flat = level2.reshape(B, T, d * d)  # (B, T, d²)
 
-    return torch.cat([level1, level2_flat], dim=-1)                    # (B, T, d+d²)
+    return torch.cat([level1, level2_flat], dim=-1)  # (B, T, d+d²)
 
 
 def signature_dim(input_dim: int, depth: int) -> int:
     """Total signature feature dimension for given depth."""
-    return sum(input_dim ** k for k in range(1, depth + 1))
+    return sum(input_dim**k for k in range(1, depth + 1))
 
 
 class PathSignatureEncoder(nn.Module):
@@ -131,8 +131,8 @@ class PathSignatureEncoder(nn.Module):
         Returns:
             (B, T, d_model) if return_all else (B, d_model)
         """
-        sig = _incremental_signatures(trajectory, self.depth)          # (B, T, sig_dim)
-        projected = self.projection(sig)                                # (B, T, d_model)
+        sig = _incremental_signatures(trajectory, self.depth)  # (B, T, sig_dim)
+        projected = self.projection(sig)  # (B, T, d_model)
         return projected if return_all else projected[:, -1, :]
 
     def encode_all_prefixes(self, trajectory: Tensor) -> Tensor:
@@ -147,7 +147,7 @@ class PathSignatureEncoder(nn.Module):
         """
         # Drop last step to get prefixes for intervals 0..n-1
         sig = _incremental_signatures(trajectory[:, :-1, :], self.depth)
-        return self.projection(sig)                                     # (B, n, d_model)
+        return self.projection(sig)  # (B, n, d_model)
 
     @staticmethod
     def recommended_depth(input_dim: int, max_sig_dim: int = 1024) -> int:

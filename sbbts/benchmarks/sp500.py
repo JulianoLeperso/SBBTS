@@ -38,7 +38,7 @@ def compute_cumulative_return(
 
     for t in range(T):
         start = max(0, t - horizon + 1)
-        cum_ret[t] = returns[start:t+1].sum(axis=0)
+        cum_ret[t] = returns[start : t + 1].sum(axis=0)
 
     return cum_ret
 
@@ -64,7 +64,7 @@ def compute_volatility(
     vol = np.zeros((T, d))
 
     for t in range(horizon - 1, T):
-        window = returns[t - horizon + 1:t + 1]
+        window = returns[t - horizon + 1 : t + 1]
         vol[t] = np.std(window, axis=0, ddof=1)
 
     return vol
@@ -91,7 +91,7 @@ def compute_zscore(
     zscore = np.zeros((T, d))
 
     for t in range(horizon, T):
-        window = returns[t - horizon:t]
+        window = returns[t - horizon : t]
         mu = np.mean(window, axis=0)
         sigma = np.std(window, axis=0, ddof=1) + 1e-8
         zscore[t] = (returns[t - 1] - mu) / sigma
@@ -136,7 +136,7 @@ def compute_market_volatility(
     vol = np.zeros(T)
 
     for t in range(horizon - 1, T):
-        window = mkt_returns[t - horizon + 1:t + 1]
+        window = mkt_returns[t - horizon + 1 : t + 1]
         vol[t] = np.std(window, ddof=1)
 
     return vol
@@ -164,7 +164,7 @@ def compute_market_cumret(
 
     for t in range(T):
         start = max(0, t - horizon + 1)
-        cumret[t] = mkt_returns[start:t+1].sum()
+        cumret[t] = mkt_returns[start : t + 1].sum()
 
     return cumret
 

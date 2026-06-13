@@ -144,6 +144,7 @@ class TestTransportMapClass:
 
     def test_with_score_net(self):
         """Should work with score network."""
+
         def mock_score(t, x, context=None):
             return 0.1 * x
 
@@ -157,6 +158,7 @@ class TestTransportMapClass:
 
     def test_inverse_with_score_net(self):
         """Inverse should work with score network."""
+
         def mock_score(t, y, context=None):
             return 0.2 * y
 

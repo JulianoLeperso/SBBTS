@@ -93,10 +93,7 @@ def run_augmentation_experiment(
 
     window_size = 20
     n_windows = n_train_days - window_size + 1
-    X_train_windows = np.array([
-        train_returns[i:i+window_size]
-        for i in range(n_windows)
-    ])
+    X_train_windows = np.array([train_returns[i : i + window_size] for i in range(n_windows)])
 
     X_reduced = reducer.fit_transform(X_train_windows)
     if verbose:
@@ -148,19 +145,16 @@ def run_augmentation_experiment(
         n_days, n_inst = returns_history.shape
         preds = np.zeros((n_days - lookback, n_inst))
         for t in range(lookback, n_days):
-            preds[t - lookback] = (returns_history[t-lookback:t].mean(axis=0) > 0).astype(float)
+            preds[t - lookback] = (returns_history[t - lookback : t].mean(axis=0) > 0).astype(float)
         return preds
 
     preds_real = simple_momentum_predict(train_returns)
     pnl_real = compute_pnl(preds_real, train_returns[5:])
     sharpe_real = compute_sharpe_from_pnl(pnl_real)
 
-    augmented_returns = np.vstack([
-        train_returns,
-        X_synth.mean(axis=1)
-    ])
+    augmented_returns = np.vstack([train_returns, X_synth.mean(axis=1)])
     preds_aug = simple_momentum_predict(augmented_returns)
-    pnl_aug = compute_pnl(preds_aug[:len(pnl_real)], train_returns[5:])
+    pnl_aug = compute_pnl(preds_aug[: len(pnl_real)], train_returns[5:])
     sharpe_aug = compute_sharpe_from_pnl(pnl_aug)
 
     if verbose:

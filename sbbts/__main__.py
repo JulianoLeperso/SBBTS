@@ -16,6 +16,7 @@ from pathlib import Path
 
 def _load(path: str):
     import numpy as np
+
     p = Path(path)
     if p.suffix == ".npy":
         return np.load(p)
@@ -30,6 +31,7 @@ def _load(path: str):
 
 def _ensure_3d(X):
     import numpy as np
+
     if X.ndim == 2:
         print(f"  Note: treating 2-D array {X.shape} as single trajectory (1, T, d)")
         return X[np.newaxis]
@@ -39,6 +41,7 @@ def _ensure_3d(X):
 # ---------------------------------------------------------------------------
 # Sub-commands
 # ---------------------------------------------------------------------------
+
 
 def cmd_fit(args):
     import numpy as np
@@ -122,6 +125,7 @@ def cmd_suggest_beta(args):
 # Parser
 # ---------------------------------------------------------------------------
 
+
 def main():
     p = argparse.ArgumentParser(
         prog="python -m sbbts",
@@ -167,8 +171,13 @@ def main():
     sb.add_argument("--T", type=float, default=1.0)
 
     args = p.parse_args()
-    {"fit": cmd_fit, "sample": cmd_sample, "augment": cmd_augment,
-     "diagnose": cmd_diagnose, "suggest-beta": cmd_suggest_beta}[args.command](args)
+    {
+        "fit": cmd_fit,
+        "sample": cmd_sample,
+        "augment": cmd_augment,
+        "diagnose": cmd_diagnose,
+        "suggest-beta": cmd_suggest_beta,
+    }[args.command](args)
 
 
 if __name__ == "__main__":

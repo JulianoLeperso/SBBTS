@@ -63,7 +63,9 @@ class CausalSelfAttention(nn.Module):
         q, k, v = qkv[0], qkv[1], qkv[2]
 
         out = F.scaled_dot_product_attention(
-            q, k, v,
+            q,
+            k,
+            v,
             is_causal=True,
             dropout_p=self.dropout_p if self.training else 0.0,
         )
@@ -163,15 +165,12 @@ class TrajectoryEncoder(nn.Module):
 
         self.input_proj = nn.Linear(input_dim, d_model)
 
-        self.pos_encoding = nn.Parameter(
-            torch.zeros(1, max_seq_len, d_model)
-        )
+        self.pos_encoding = nn.Parameter(torch.zeros(1, max_seq_len, d_model))
         nn.init.normal_(self.pos_encoding, std=0.02)
 
-        self.layers = nn.ModuleList([
-            TransformerEncoderLayer(d_model, n_heads, dropout=dropout)
-            for _ in range(n_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [TransformerEncoderLayer(d_model, n_heads, dropout=dropout) for _ in range(n_layers)]
+        )
 
         self.norm = nn.LayerNorm(d_model)
 

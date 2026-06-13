@@ -109,24 +109,26 @@ def run_heston_recovery(
         print("\n5. Evaluating parameter recovery...")
 
     train_eval = evaluate_parameter_recovery(
-        train_params[:len(train_est_params)],
-        train_est_params
+        train_params[: len(train_est_params)], train_est_params
     )
     synth_eval = evaluate_parameter_recovery(
-        train_params[:len(synth_est_params)],
-        synth_est_params
+        train_params[: len(synth_est_params)], synth_est_params
     )
 
     if verbose:
         print("\nResults (Real Data MLE):")
         for param, stats in train_eval.items():
-            print(f"  {param}: true_mean={stats['true_mean']:.3f}, "
-                  f"est_mean={stats['est_mean']:.3f}, rmse={stats['rmse']:.3f}")
+            print(
+                f"  {param}: true_mean={stats['true_mean']:.3f}, "
+                f"est_mean={stats['est_mean']:.3f}, rmse={stats['rmse']:.3f}"
+            )
 
         print("\nResults (Synthetic Data MLE):")
         for param, stats in synth_eval.items():
-            print(f"  {param}: true_mean={stats['true_mean']:.3f}, "
-                  f"est_mean={stats['est_mean']:.3f}, rmse={stats['rmse']:.3f}")
+            print(
+                f"  {param}: true_mean={stats['true_mean']:.3f}, "
+                f"est_mean={stats['est_mean']:.3f}, rmse={stats['rmse']:.3f}"
+            )
 
     return {
         "model": model,
@@ -163,7 +165,7 @@ def plot_parameter_distributions(
     for i, (name, label) in enumerate(zip(param_names, param_labels)):
         ax = axes[i]
 
-        true_vals = [getattr(p, name) for p in train_params[:len(train_est_params)]]
+        true_vals = [getattr(p, name) for p in train_params[: len(train_est_params)]]
         train_vals = [getattr(p, name) for p in train_est_params]
         synth_vals = [getattr(p, name) for p in synth_est_params]
 
@@ -194,7 +196,7 @@ if __name__ == "__main__":
     )
 
     plot_parameter_distributions(
-        results["train_params"][:len(results["train_est_params"])],
+        results["train_params"][: len(results["train_est_params"])],
         results["train_est_params"],
         results["synth_est_params"],
     )
