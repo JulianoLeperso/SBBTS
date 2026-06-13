@@ -42,7 +42,6 @@ Thumbs.db
 # Research artefacts (not source code)
 *.pdf
 paper.txt
-THEORY.md
 README_TODO.md
 docs/
 
