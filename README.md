@@ -1,15 +1,37 @@
 # SBBTS — Schrödinger-Bass Bridge for Time Series
 
-A Python library for generating synthetic financial time series that jointly calibrates
-drift **and** volatility — fixing the key limitation of Schrödinger Bridge methods,
-which fix σ = I and cannot produce stochastic volatility.
+**SBBTS** is a Python library for **synthetic financial time series generation** and
+**time series data augmentation**. It jointly calibrates drift **and** volatility —
+fixing the key limitation of Schrödinger Bridge methods, which fix σ = I and cannot
+produce stochastic volatility.
+
+A clean, pip-installable re-implementation of the **Schrödinger-Bass Bridge for Time Series**
+framework with a scikit-learn-style API (`.fit()` / `.sample()` / `.augment()`), practical
+defaults for financial data, and built-in stylized-fact diagnostics.
 
 Based on: *SBBTS: A Unified Schrödinger–Bass Framework for Synthetic Financial Time Series*,
-Alouadi, Loeper, Marsala, Mazhar, Pham — arXiv:2604.07159 (2026).
+Alouadi, Loeper, Marsala, Mazhar, Pham — [arXiv:2604.07159](https://arxiv.org/abs/2604.07159) (2026).
 
-This is an independent re-implementation of the algorithm described in the paper,
-written from scratch as a structured Python library with a scikit-learn-style API.
 See [THEORY.md](THEORY.md) for the full mathematical derivation.
+
+> **Keywords:** SBBTS · Schrödinger-Bass Bridge · Schrodinger Bass Bridge · Schrodinger bridge ·
+> Schrödinger bridge time series · synthetic time series · financial time series generation ·
+> time series augmentation · synthetic financial data · generative model for time series ·
+> optimal transport · diffusion model · quantitative finance · PyTorch
+
+---
+
+## Why this implementation?
+
+The [original paper](https://arxiv.org/abs/2604.07159) ships research scripts.
+This repo packages the same algorithm as a proper Python library:
+
+- **scikit-learn-style API** — `model.fit(X)`, `model.sample(n)`, `model.augment(X, factor=200)`
+- **One-line install** — `pip install sbbts` (or `pip install -e .` from source)
+- **Practical defaults** — `suggest_beta()`, `normalize_input=True`, auto CUDA
+- **Built-in diagnostics** — ACF, marginal, QQ, leverage effect, TSTR score, rolling vol
+- **Fully documented** — [THEORY.md](THEORY.md) walks through every equation, every parameter
+- **No internal dependencies** — pulls SPX data via `yfinance`, runs on CPU or GPU
 
 ---
 

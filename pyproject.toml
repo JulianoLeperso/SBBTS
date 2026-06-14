@@ -12,12 +12,21 @@ authors = [
     {name = "Based on Alouadi et al."},
 ]
 keywords = [
-    "machine learning",
-    "generative AI",
-    "time series",
+    "sbbts",
+    "schrodinger bass bridge",
+    "schrodinger bridge",
+    "schrodinger-bass bridge",
+    "synthetic time series",
+    "time series generation",
+    "time series augmentation",
+    "financial time series",
+    "synthetic financial data",
+    "generative models",
     "optimal transport",
-    "Schrödinger bridge",
-    "financial data",
+    "diffusion models",
+    "pytorch",
+    "quantitative finance",
+    "machine learning",
     "data augmentation",
 ]
 classifiers = [
