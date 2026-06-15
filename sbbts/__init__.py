@@ -29,6 +29,12 @@ from sbbts.utils.visualization import (
     tstr_score,
     diagnose,
     full_diagnose,
+    # Generic (domain-agnostic) plots
+    plot_feature_paths,
+    plot_feature_marginals,
+    plot_feature_acf,
+    plot_feature_stats,
+    diagnose_generic,
 )
 from sbbts.nn.inverse_net import InverseNet
 from sbbts.nn.signature_encoder import PathSignatureEncoder
@@ -52,6 +58,7 @@ from sbbts.utils.metrics import (
     expected_shortfall,
     sharpe_ratio,
     compute_all_risk_metrics,
+    compute_generic_metrics,
 )
 
 __all__ = [
@@ -89,6 +96,12 @@ __all__ = [
     # Visualization — composite figures
     "diagnose",
     "full_diagnose",
+    # Visualization — generic (domain-agnostic)
+    "plot_feature_paths",
+    "plot_feature_marginals",
+    "plot_feature_acf",
+    "plot_feature_stats",
+    "diagnose_generic",
     # Metrics & utilities
     "log_ret_to_prices",
     "compute_metrics",
@@ -98,4 +111,5 @@ __all__ = [
     "expected_shortfall",
     "sharpe_ratio",
     "compute_all_risk_metrics",
+    "compute_generic_metrics",
 ]

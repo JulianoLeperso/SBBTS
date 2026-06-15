@@ -1245,3 +1245,452 @@ def full_diagnose(
 
     plt.tight_layout()
     return fig
+
+
+# ── Generic (domain-agnostic) visualization ──────────────────────────────────
+
+
+def _ensure_3d(arr: np.ndarray) -> np.ndarray:
+    """Ensure shape (N, T, d); add d-axis if 2-D."""
+    arr = np.asarray(arr)
+    if arr.ndim == 2:
+        arr = arr[:, :, np.newaxis]
+    return arr
+
+
+def _feature_names_default(d: int, names=None):
+    if names is not None and len(names) == d:
+        return list(names)
+    return [f"feature_{i}" for i in range(d)]
+
+
+def plot_feature_paths(
+    real: np.ndarray,
+    synthetic: np.ndarray,
+    feature_names=None,
+    n_paths: int = 5,
+    max_cols: int = 3,
+    axes=None,
+    logger=None,
+):
+    """
+    One panel per feature showing sample trajectories (real vs synthetic).
+
+    Each panel overlays ``n_paths`` real trajectories (blue) and ``n_paths``
+    synthetic trajectories (red) for the corresponding feature dimension.
+
+    Args:
+        real:          Shape (N, T, d) or (N, T).
+        synthetic:     Same shape as real.
+        feature_names: List of d strings — auto-generated if None.
+        n_paths:       Number of trajectories to overlay per panel.
+        max_cols:      Maximum columns in the subplot grid.
+        axes:          Pre-existing axes array (flattened, length d). Created if None.
+        logger:        Optional SBBTSLogger.
+
+    Returns:
+        Flat array of Axes, length d.
+    """
+    _require_matplotlib()
+
+    real = _ensure_3d(np.asarray(real))
+    synthetic = _ensure_3d(np.asarray(synthetic))
+    d = real.shape[-1]
+    names = _feature_names_default(d, feature_names)
+
+    n_cols = min(d, max_cols)
+    n_rows = (d + n_cols - 1) // n_cols
+
+    if axes is None:
+        fig, axes_2d = plt.subplots(
+            n_rows, n_cols,
+            figsize=(5 * n_cols, 3.5 * n_rows),
+            squeeze=False,
+        )
+        axes_flat = axes_2d.flatten()
+        # Hide unused panels
+        for idx in range(d, len(axes_flat)):
+            axes_flat[idx].set_visible(False)
+    else:
+        axes_flat = np.asarray(axes).flatten()
+
+    for i in range(d):
+        ax = axes_flat[i]
+        for j in range(min(n_paths, len(real))):
+            ax.plot(real[j, :, i], alpha=0.65, linewidth=0.9, color=REAL_C,
+                    label="Real" if j == 0 else None)
+        for j in range(min(n_paths, len(synthetic))):
+            ax.plot(synthetic[j, :, i], alpha=0.65, linewidth=0.9, color=SYNTH_C,
+                    label="Synthetic" if j == 0 else None)
+        ax.set_title(names[i])
+        ax.set_xlabel("Time step")
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    if logger is not None:
+        logger.section("Feature Paths")
+        rows = []
+        for i in range(d):
+            r_vals = real[:, :, i].flatten()
+            s_vals = synthetic[:, :, i].flatten()
+            rows.append([
+                names[i],
+                f"{float(r_vals.mean()):.4f}",
+                f"{float(s_vals.mean()):.4f}",
+                f"{float(r_vals.std(ddof=1)):.4f}",
+                f"{float(s_vals.std(ddof=1)):.4f}",
+            ])
+        logger.write_table(["Feature", "Real μ", "Synth μ", "Real σ", "Synth σ"], rows)
+
+    return axes_flat[:d]
+
+
+def plot_feature_marginals(
+    real: np.ndarray,
+    synthetic: np.ndarray,
+    feature_names=None,
+    n_bins: int = 60,
+    max_cols: int = 3,
+    axes=None,
+    logger=None,
+):
+    """
+    One histogram panel per feature (real vs synthetic, overlaid).
+
+    Args:
+        real:          Shape (N, T, d) or (N, T).
+        synthetic:     Same shape.
+        feature_names: List of d strings.
+        n_bins:        Number of histogram bins (clipped to real data range).
+        max_cols:      Maximum columns in the grid.
+        axes:          Pre-existing flat Axes array of length d.
+        logger:        Optional SBBTSLogger.
+
+    Returns:
+        Flat array of Axes, length d.
+    """
+    _require_matplotlib()
+
+    real = _ensure_3d(np.asarray(real))
+    synthetic = _ensure_3d(np.asarray(synthetic))
+    d = real.shape[-1]
+    names = _feature_names_default(d, feature_names)
+
+    n_cols = min(d, max_cols)
+    n_rows = (d + n_cols - 1) // n_cols
+
+    if axes is None:
+        fig, axes_2d = plt.subplots(
+            n_rows, n_cols,
+            figsize=(5 * n_cols, 3.5 * n_rows),
+            squeeze=False,
+        )
+        axes_flat = axes_2d.flatten()
+        for idx in range(d, len(axes_flat)):
+            axes_flat[idx].set_visible(False)
+    else:
+        axes_flat = np.asarray(axes).flatten()
+
+    try:
+        from scipy.stats import kurtosis as _kurt, skew as _skew
+        _has_scipy = True
+    except ImportError:
+        _has_scipy = False
+
+    for i in range(d):
+        ax = axes_flat[i]
+        r = real[:, :, i].flatten()
+        s = synthetic[:, :, i].flatten()
+
+        lo, hi = np.percentile(r, 0.5), np.percentile(r, 99.5)
+        bins = np.linspace(lo, hi, n_bins)
+        ax.hist(r, bins=bins, density=True, alpha=0.55, label="Real", color=REAL_C)
+        ax.hist(s, bins=bins, density=True, alpha=0.55, label="Synthetic", color=SYNTH_C)
+        ax.set_xlim(lo, hi)
+        ax.set_title(names[i])
+        ax.set_xlabel("Value")
+        ax.set_ylabel("Density")
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    if logger is not None:
+        logger.section("Feature Marginals")
+        for i in range(d):
+            r = real[:, :, i].flatten()
+            s = synthetic[:, :, i].flatten()
+            skew_r = float(_skew(r)) if _has_scipy else float("nan")
+            skew_s = float(_skew(s)) if _has_scipy else float("nan")
+            kurt_r = float(_kurt(r, fisher=True)) if _has_scipy else float("nan")
+            kurt_s = float(_kurt(s, fisher=True)) if _has_scipy else float("nan")
+            logger.write(f"  [{names[i]}]  mean: real={r.mean():.4f} synth={s.mean():.4f}"
+                         f"  std: real={r.std(ddof=1):.4f} synth={s.std(ddof=1):.4f}"
+                         f"  skew: real={skew_r:.3f} synth={skew_s:.3f}"
+                         f"  kurt: real={kurt_r:.3f} synth={kurt_s:.3f}")
+
+    return axes_flat[:d]
+
+
+def plot_feature_acf(
+    real: np.ndarray,
+    synthetic: np.ndarray,
+    feature_names=None,
+    max_lag: int = 20,
+    max_cols: int = 3,
+    axes=None,
+    logger=None,
+):
+    """
+    One ACF bar panel per feature.
+
+    Args:
+        real:          Shape (N, T, d) or (N, T).
+        synthetic:     Same shape.
+        feature_names: List of d strings.
+        max_lag:       Number of lags.
+        max_cols:      Grid columns.
+        axes:          Pre-existing flat Axes array of length d.
+        logger:        Optional SBBTSLogger.
+
+    Returns:
+        Flat array of Axes, length d.
+    """
+    _require_matplotlib()
+    from sbbts.utils.metrics import autocorrelation
+
+    real = _ensure_3d(np.asarray(real))
+    synthetic = _ensure_3d(np.asarray(synthetic))
+    d = real.shape[-1]
+    names = _feature_names_default(d, feature_names)
+
+    n_cols = min(d, max_cols)
+    n_rows = (d + n_cols - 1) // n_cols
+
+    if axes is None:
+        fig, axes_2d = plt.subplots(
+            n_rows, n_cols,
+            figsize=(5 * n_cols, 3.5 * n_rows),
+            squeeze=False,
+        )
+        axes_flat = axes_2d.flatten()
+        for idx in range(d, len(axes_flat)):
+            axes_flat[idx].set_visible(False)
+    else:
+        axes_flat = np.asarray(axes).flatten()
+
+    lags = np.arange(max_lag + 1)
+    for i in range(d):
+        ax = axes_flat[i]
+        r_series = real[:, :, i].flatten()
+        s_series = synthetic[:, :, i].flatten()
+
+        acf_r = autocorrelation(r_series, max_lag)
+        acf_s = autocorrelation(s_series, max_lag)
+
+        ax.bar(lags - 0.2, acf_r, width=0.35, label="Real", color=REAL_C, alpha=0.85)
+        ax.bar(lags + 0.2, acf_s, width=0.35, label="Synthetic", color=SYNTH_C, alpha=0.85)
+        ax.axhline(0, color="black", linewidth=0.5)
+        ax.set_title(f"ACF — {names[i]}")
+        ax.set_xlabel("Lag")
+        ax.set_ylabel("ACF")
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    if logger is not None:
+        logger.section("Feature ACF")
+        for i in range(d):
+            r_series = real[:, :, i].flatten()
+            s_series = synthetic[:, :, i].flatten()
+            acf_r = autocorrelation(r_series, max_lag)
+            acf_s = autocorrelation(s_series, max_lag)
+            sum_r = float(np.sum(np.abs(acf_r[1:])))
+            sum_s = float(np.sum(np.abs(acf_s[1:])))
+            logger.write(f"  [{names[i]}]  sum|ACF| real={sum_r:.4f}  synth={sum_s:.4f}"
+                         f"  ratio={sum_s/(sum_r+1e-10):.3f}")
+
+    return axes_flat[:d]
+
+
+def plot_feature_stats(
+    real: np.ndarray,
+    synthetic: np.ndarray,
+    feature_names=None,
+    ax=None,
+    logger=None,
+):
+    """
+    Heatmap of synth/real ratios for mean, std, skewness, and kurtosis per feature.
+
+    A compact single-panel summary useful when d > 3. Each cell shows the ratio
+    synthetic / real for that statistic and feature. Colour scale: 1.0 = perfect match.
+
+    Args:
+        real:          Shape (N, T, d) or (N, T).
+        synthetic:     Same shape.
+        feature_names: List of d strings.
+        ax:            Pre-existing Axes. Created if None.
+        logger:        Optional SBBTSLogger.
+
+    Returns:
+        The Axes object.
+    """
+    _require_matplotlib()
+
+    try:
+        from scipy.stats import kurtosis as _kurt, skew as _skew
+        _has_scipy = True
+    except ImportError:
+        _has_scipy = False
+
+    real = _ensure_3d(np.asarray(real))
+    synthetic = _ensure_3d(np.asarray(synthetic))
+    d = real.shape[-1]
+    names = _feature_names_default(d, feature_names)
+    stat_labels = ["mean", "std", "skew", "kurtosis"]
+
+    ratios = np.zeros((d, 4))
+    for i in range(d):
+        r = real[:, :, i].flatten()
+        s = synthetic[:, :, i].flatten()
+
+        r_mean, s_mean = r.mean(), s.mean()
+        r_std, s_std = r.std(ddof=1), s.std(ddof=1)
+        ratios[i, 0] = (s_mean / r_mean) if abs(r_mean) > 1e-10 else float("nan")
+        ratios[i, 1] = (s_std / r_std) if r_std > 0 else float("nan")
+
+        if _has_scipy:
+            r_skew, s_skew = float(_skew(r)), float(_skew(s))
+            r_kurt, s_kurt = float(_kurt(r, fisher=True)), float(_kurt(s, fisher=True))
+            ratios[i, 2] = (s_skew / r_skew) if abs(r_skew) > 1e-4 else float("nan")
+            ratios[i, 3] = (s_kurt / r_kurt) if abs(r_kurt) > 1e-4 else float("nan")
+        else:
+            ratios[i, 2] = float("nan")
+            ratios[i, 3] = float("nan")
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(max(5, d * 0.8 + 2), 3))
+
+    # Clip extreme ratios for colour scale readability
+    plot_data = np.clip(np.nan_to_num(ratios, nan=1.0), 0.0, 3.0)
+    im = ax.imshow(plot_data.T, cmap="RdYlGn", vmin=0.5, vmax=1.5, aspect="auto")
+    plt.colorbar(im, ax=ax, label="synth / real ratio (1.0 = perfect)")
+
+    ax.set_xticks(range(d))
+    ax.set_xticklabels(names, rotation=45, ha="right", fontsize=8)
+    ax.set_yticks(range(4))
+    ax.set_yticklabels(stat_labels)
+    ax.set_title("Feature statistics: synthetic / real ratio")
+
+    # Annotate cells with ratio values
+    for i in range(d):
+        for j in range(4):
+            val = ratios[i, j]
+            text = f"{val:.2f}" if not np.isnan(val) else "—"
+            ax.text(i, j, text, ha="center", va="center", fontsize=7,
+                    color="black" if 0.6 < plot_data[i, j] < 1.4 else "white")
+
+    if logger is not None:
+        logger.section("Feature Statistics Ratios (synth/real)")
+        logger.write_table(
+            ["Feature"] + stat_labels,
+            [
+                [names[i]] + [
+                    f"{ratios[i, j]:.3f}" if not np.isnan(ratios[i, j]) else "n/a"
+                    for j in range(4)
+                ]
+                for i in range(d)
+            ],
+        )
+
+    return ax
+
+
+def diagnose_generic(
+    real: np.ndarray,
+    synthetic: np.ndarray,
+    feature_names=None,
+    figsize=None,
+    title: str = "SBBTS Generic Diagnostic",
+    max_lag: int = 20,
+    n_paths: int = 5,
+    max_cols: int = 3,
+    logger=None,
+):
+    """
+    Composite diagnostic figure for any multivariate time series.
+
+    No financial assumptions — works for returns, volatility, macro factors,
+    or any other domain. Contains three blocks:
+
+    - Block 1 (sample paths):   one panel per feature
+    - Block 2 (marginals):      one histogram per feature
+    - Block 3 (ACF + corr):     one ACF panel per feature + cross-feature heatmaps
+
+    Args:
+        real:          Real trajectories,      shape (N,  T, d).
+        synthetic:     Synthetic trajectories, shape (N2, T, d).
+        feature_names: List of d label strings. Auto-generated if None.
+        figsize:       Figure size. Auto-computed from d if None.
+        title:         Figure super-title.
+        max_lag:       ACF lag count.
+        n_paths:       Sample trajectories per panel.
+        max_cols:      Grid columns for per-feature panels.
+        logger:        Optional SBBTSLogger.
+
+    Returns:
+        matplotlib.Figure
+    """
+    _require_matplotlib()
+
+    real = _ensure_3d(np.asarray(real))
+    synthetic = _ensure_3d(np.asarray(synthetic))
+    d = real.shape[-1]
+    names = _feature_names_default(d, feature_names)
+
+    n_cols = min(d, max_cols)
+    n_feat_rows = (d + n_cols - 1) // n_cols
+
+    # Total rows: paths + marginals + ACF + correlation (2 panels, 1 row)
+    # We use a GridSpec where each "block" gets n_feat_rows rows
+    corr_rows = 1
+    total_rows = 3 * n_feat_rows + corr_rows
+
+    if figsize is None:
+        figsize = (5 * n_cols, 3.5 * total_rows)
+
+    fig = plt.figure(figsize=figsize, layout="constrained")
+    fig.suptitle(title, fontsize=14, fontweight="bold")
+    import matplotlib.gridspec as gridspec
+
+    gs = gridspec.GridSpec(total_rows, n_cols, figure=fig, hspace=0.5, wspace=0.35)
+
+    # ── Block 1: sample paths ────────────────────────────────────────────
+    path_axes = [fig.add_subplot(gs[n_feat_rows * 0 + r, c])
+                 for r in range(n_feat_rows) for c in range(n_cols)]
+    plot_feature_paths(real, synthetic, feature_names=names,
+                       n_paths=n_paths, axes=path_axes, logger=logger)
+
+    # ── Block 2: marginals ───────────────────────────────────────────────
+    marg_axes = [fig.add_subplot(gs[n_feat_rows * 1 + r, c])
+                 for r in range(n_feat_rows) for c in range(n_cols)]
+    plot_feature_marginals(real, synthetic, feature_names=names,
+                           axes=marg_axes, logger=logger)
+
+    # ── Block 3a: ACF ────────────────────────────────────────────────────
+    acf_axes = [fig.add_subplot(gs[n_feat_rows * 2 + r, c])
+                for r in range(n_feat_rows) for c in range(n_cols)]
+    plot_feature_acf(real, synthetic, feature_names=names, max_lag=max_lag,
+                     axes=acf_axes, logger=logger)
+
+    # ── Block 3b: cross-feature correlation ─────────────────────────────
+    if d > 1:
+        corr_row_start = n_feat_rows * 3
+        ax_corr_r = fig.add_subplot(gs[corr_row_start, : n_cols // 2 or 1])
+        ax_corr_s = fig.add_subplot(gs[corr_row_start, n_cols // 2 or 1 :])
+        plot_correlation_comparison(real, synthetic, axes=[ax_corr_r, ax_corr_s], logger=logger)
+    else:
+        # d=1: show feature stats summary instead
+        stats_row = n_feat_rows * 3
+        ax_stats = fig.add_subplot(gs[stats_row, :])
+        plot_feature_stats(real, synthetic, feature_names=names, ax=ax_stats, logger=logger)
+
+    return fig

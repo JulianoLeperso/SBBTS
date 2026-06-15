@@ -53,8 +53,8 @@ pip install -e ".[dev]"
 import numpy as np
 from sbbts import SBBTS
 
-# X_train: (N_windows, T, d)  — rolling windows of log returns
-# e.g. 1000 windows of 252 days of 1 asset
+# X_train: (N_windows, T, d)  — rolling windows of any stationary time series
+# e.g. 1000 windows of 252 steps for 1 feature
 X_train = np.load("spx_windows.npy")   # shape (1000, 252, 1)
 
 beta = SBBTS.suggest_beta(n_time_points=252)   # auto: β·Δt = 5
@@ -65,6 +65,27 @@ X_synth = model.sample(n=500)          # (500, 252, 1) — new synthetic paths
 X_aug   = model.augment(X_train, factor=200)  # real + 200× synthetic
 model.save("sbbts_spx.pt")
 ```
+
+---
+
+## Multi-feature input
+
+SBBTS accepts any multivariate time series — not just financial returns.
+Pass `d > 1` features directly as the last axis of `X_train`:
+
+```python
+# d=2: log-return + realized variance
+X_train = np.stack([windows_log_ret, windows_realized_vol], axis=-1)  # (N, T, 2)
+
+model = SBBTS(beta=SBBTS.suggest_beta(T), n_steps=5)
+model.fit(X_train, feature_names=["log_return", "realized_vol"])
+
+X_synth = model.sample(n=500)              # (500, T, 2)
+fig = model.diagnose_generic(X_train)      # domain-agnostic diagnostic (no Sharpe/VaR)
+```
+
+For a full guide on supported data types, acceptance conditions, and domain-agnostic
+workflows → see [GUIDE.md](GUIDE.md).
 
 ---
 
@@ -105,7 +126,19 @@ The flag is on by default and should stay on unless your data is already standar
 |---|---|---|---|
 | `N_windows` | number of rolling windows | ~500 | 1000+ |
 | `T` | window length (time steps) | 50 | 252 (1 trading year) |
-| `d` | number of assets / factors | 1 | 1–20 (reduce first for d > 20) |
+| `d` | number of features / assets | 1 | 1–20 (reduce first for d > 20) |
+
+**Accepted data types (short list):**
+
+| Type | Works? | Notes |
+|---|---|---|
+| Log-returns | ✅ Validated | Paper benchmark |
+| Realized variance / volatility | ✅ OK | Log-transform if log-normal |
+| PCA factors | ✅ OK | Already normalized |
+| Raw prices | ❌ Avoid | Non-stationary — differentiate first |
+| Discrete / categorical | ❌ Not applicable | KL divergence undefined |
+
+Full acceptance conditions and more data types → [GUIDE.md](GUIDE.md).
 
 **How to build windows from daily prices:**
 
@@ -295,16 +328,32 @@ SBBTS(
     grad_clip=0.0,               # 0 = disabled; try 1.0 if loss spikes
     early_stopping_patience=0,   # 0 = disabled
     encoder_type="transformer",  # or "signature"
+    feature_names=None,          # optional list of d feature labels
     device=None,                 # auto-detect
     logger=None,                 # SBBTSLogger or W&B/MLflow compatible
 )
 
-model.fit(X)                     # X: (N, T, d) ndarray or tensor
+model.fit(X, feature_names=None) # X: (N, T, d); feature_names overrides __init__
 model.sample(n)                  # → (n, T, d) ndarray
 model.augment(X_real, factor=200)# → (N + 200N, T, d)
+model.diagnose(X_real)           # financial diagnostic (VaR, Sharpe, leverage…)
+model.diagnose_generic(X_real)   # domain-agnostic diagnostic (paths, dist, ACF, corr)
 model.save("model.pt")
 SBBTS.load("model.pt")
 SBBTS.suggest_beta(n_time_points, safety_factor=5.0)
+```
+
+**Generic (domain-agnostic) utilities:**
+
+```python
+from sbbts import (
+    diagnose_generic,          # composite plot — no finance assumptions
+    plot_feature_paths,        # one trajectory panel per feature
+    plot_feature_marginals,    # one histogram per feature
+    plot_feature_acf,          # one ACF panel per feature
+    plot_feature_stats,        # synth/real stat-ratio heatmap
+    compute_generic_metrics,   # data-agnostic quality metrics
+)
 ```
 
 ---

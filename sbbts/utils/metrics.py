@@ -436,6 +436,110 @@ def compute_tstr(
     }
 
 
+def compute_generic_metrics(
+    real: Union[np.ndarray, "Tensor"],
+    synthetic: Union[np.ndarray, "Tensor"],
+    max_lag: int = 10,
+) -> dict:
+    """
+    Data-agnostic comparison metrics between real and synthetic trajectories.
+
+    Computes per-feature statistics without any financial assumptions
+    (no annualization, no VaR, no Sharpe). Works for any input domain.
+
+    Args:
+        real:      Real trajectories,      shape (N,  T, d)
+        synthetic: Synthetic trajectories, shape (N2, T, d)
+        max_lag:   Number of ACF lags for temporal structure comparison
+
+    Returns:
+        dict with per-feature arrays (shape (d,)) and scalar summaries:
+          - mean_diff:        synth_mean - real_mean per feature
+          - std_ratio:        synth_std / real_std per feature (target ≈ 1)
+          - kurtosis_ratio:   excess kurtosis ratio per feature (target ≈ 1)
+          - acf_sum_ratio:    sum|ACF synth| / sum|ACF real| per feature (target ≈ 1)
+          - corr_frob_error:  ||corr_synth - corr_real||_F  (cross-feature, scalar)
+          - ks_statistic:     KS test statistic per feature (target → 0)
+          - mean_diff_mean:   mean of |mean_diff| across features (scalar)
+          - std_ratio_mean:   mean of std_ratio across features (scalar)
+    """
+    try:
+        from scipy.stats import kurtosis as _kurt, ks_2samp
+        _has_scipy = True
+    except ImportError:
+        _has_scipy = False
+
+    real = to_numpy(real).astype(np.float64)
+    synthetic = to_numpy(synthetic).astype(np.float64)
+
+    # Ensure shape (N, T, d)
+    if real.ndim == 2:
+        real = real[:, :, np.newaxis]
+    if synthetic.ndim == 2:
+        synthetic = synthetic[:, :, np.newaxis]
+
+    d = real.shape[-1]
+
+    # Flatten (N, T, d) → (N*T, d) for marginal statistics
+    r_flat = real.reshape(-1, d)
+    s_flat = synthetic.reshape(-1, d)
+
+    mean_diff = s_flat.mean(axis=0) - r_flat.mean(axis=0)
+
+    r_std = r_flat.std(axis=0, ddof=1)
+    s_std = s_flat.std(axis=0, ddof=1)
+    std_ratio = np.where(r_std > 0, s_std / r_std, np.nan)
+
+    if _has_scipy:
+        kurtosis_real = np.array([float(_kurt(r_flat[:, i], fisher=True)) for i in range(d)])
+        kurtosis_synth = np.array([float(_kurt(s_flat[:, i], fisher=True)) for i in range(d)])
+        kurtosis_ratio = np.where(
+            np.abs(kurtosis_real) > 1e-8, kurtosis_synth / kurtosis_real, np.nan
+        )
+        ks_statistic = np.array([
+            float(ks_2samp(r_flat[:, i], s_flat[:, i]).statistic) for i in range(d)
+        ])
+    else:
+        kurtosis_ratio = np.full(d, np.nan)
+        ks_statistic = np.full(d, np.nan)
+
+    # Per-feature ACF sum
+    def _acf_sum(series_1d, max_lag):
+        n = len(series_1d)
+        mean = series_1d.mean()
+        v = series_1d.var()
+        if v == 0 or n <= max_lag:
+            return 0.0
+        total = 0.0
+        for lag in range(1, max_lag + 1):
+            cov = np.mean((series_1d[:-lag] - mean) * (series_1d[lag:] - mean))
+            total += abs(cov / v)
+        return float(total)
+
+    acf_sum_real = np.array([_acf_sum(r_flat[:, i], max_lag) for i in range(d)])
+    acf_sum_synth = np.array([_acf_sum(s_flat[:, i], max_lag) for i in range(d)])
+    acf_sum_ratio = np.where(acf_sum_real > 0, acf_sum_synth / acf_sum_real, np.nan)
+
+    # Cross-feature correlation error (Frobenius norm)
+    if d > 1:
+        corr_r = np.corrcoef(r_flat.T)
+        corr_s = np.corrcoef(s_flat.T)
+        corr_frob_error = float(np.linalg.norm(corr_s - corr_r, "fro"))
+    else:
+        corr_frob_error = 0.0
+
+    return {
+        "mean_diff": mean_diff,
+        "std_ratio": std_ratio,
+        "kurtosis_ratio": kurtosis_ratio,
+        "acf_sum_ratio": acf_sum_ratio,
+        "corr_frob_error": corr_frob_error,
+        "ks_statistic": ks_statistic,
+        "mean_diff_mean": float(np.nanmean(np.abs(mean_diff))),
+        "std_ratio_mean": float(np.nanmean(std_ratio)),
+    }
+
+
 class MetricsTracker:
     """
     Track and aggregate metrics during evaluation.

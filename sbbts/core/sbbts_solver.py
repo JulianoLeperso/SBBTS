@@ -133,6 +133,8 @@ class SBBTS(nn.Module):
         grad_clip: float = 1.0,
         # Input normalisation
         normalize_input: bool = True,
+        # Feature metadata
+        feature_names: Optional[list] = None,
         # Logging
         logger=None,
         log_dir: Optional[str] = None,
@@ -168,6 +170,10 @@ class SBBTS(nn.Module):
                 per feature before training and undo the transform in sample().
                 Strongly recommended for financial returns (scale ~0.01) to avoid
                 the 100x scale mismatch with the N(0,1) sampling initialisation.
+            feature_names: Optional list of d strings labelling each input feature.
+                Stored in the model and propagated automatically to diagnose() and
+                diagnose_generic(). Can be overridden at plot time. If None, names
+                are auto-assigned in fit() as ["feature_0", ..., "feature_{d-1}"].
             logger: Optional logger with .log(dict) method (W&B, MLflow, SBBTSLogger, etc.)
             log_dir: If set, auto-creates a SBBTSLogger in this directory and uses it
                 as the run logger (ignored when logger= is explicitly provided).
@@ -205,6 +211,7 @@ class SBBTS(nn.Module):
         self.covariate_dim = covariate_dim
         self.grad_clip = grad_clip
         self.normalize_input = normalize_input
+        self.feature_names: Optional[list] = list(feature_names) if feature_names is not None else None
         # Filled by fit(); used to denormalise sample() output
         self._train_mean: Optional[Tensor] = None
         self._train_std: Optional[Tensor] = None
@@ -254,6 +261,133 @@ class SBBTS(nn.Module):
         """
         dt = T / (n_time_points - 1)
         return safety_factor / dt
+
+    # ------------------------------------------------------------------
+    # Data condition checks
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _check_data_conditions(X: "Tensor", feature_names: list) -> None:
+        """
+        Run pre-training sanity checks on the input data.
+
+        Raises ValueError for hard failures; emits UserWarning for soft issues
+        that may degrade quality but won't crash training.
+
+        Checks (per feature):
+          1. Near-constant  — std < 1e-6  → ValueError (model cannot learn)
+          2. Non-stationary — ADF p > 0.05 → Warning (prices instead of returns?)
+          3. Near-discrete  — n_unique / n_total < 0.01 → Warning (KL divergence risk)
+          4. Extreme kurtosis — excess kurtosis > 100 → Warning (numerical instability risk)
+          5. Scale mismatch — max_std / min_std > 1000 → Warning across features
+        """
+        import numpy as np_
+
+        data = X.detach().cpu().numpy() if hasattr(X, "detach") else np_.asarray(X)
+        N, T, d = data.shape
+        flat = data.reshape(-1, d)  # (N*T, d) for marginal stats
+
+        stds = flat.std(axis=0, ddof=1)
+
+        # ── 1. Near-constant feature ────────────────────────────────────
+        for i in range(d):
+            if stds[i] < 1e-6:
+                raise ValueError(
+                    f"Feature '{feature_names[i]}' is near-constant (std={stds[i]:.2e}). "
+                    f"SBBTS cannot learn a distribution from constant input. "
+                    f"Remove or replace this feature."
+                )
+
+        # ── 2. Stationarity (ADF test, requires statsmodels) ────────────
+        try:
+            from statsmodels.tsa.stattools import adfuller
+            _has_adf = True
+        except ImportError:
+            _has_adf = False
+
+        if _has_adf:
+            for i in range(d):
+                # Use the aggregated per-window series: mean across windows at each time step
+                series = data[:, :, i].mean(axis=0)  # (T,)
+                if len(series) < 10:
+                    continue
+                try:
+                    adf_stat, p_value, _, _, _, _ = adfuller(series, autolag="AIC", maxlag=min(10, T // 5))
+                    if p_value > 0.05:
+                        warnings.warn(
+                            f"[SBBTS data check] Feature '{feature_names[i]}' may be non-stationary "
+                            f"(ADF p={p_value:.3f} > 0.05). "
+                            f"Non-stationary series violate the KL condition (Assumption 3.1). "
+                            f"Consider differencing (e.g. log-returns instead of prices).",
+                            UserWarning,
+                            stacklevel=6,
+                        )
+                except Exception:
+                    pass  # ADF can fail on degenerate series; silently skip
+        else:
+            # Fallback: simple linear trend test via OLS slope significance
+            t_idx = np_.arange(T, dtype=np_.float64)
+            t_centered = t_idx - t_idx.mean()
+            for i in range(d):
+                series = data[:, :, i].mean(axis=0)
+                slope = np_.dot(t_centered, series) / (np_.dot(t_centered, t_centered) + 1e-12)
+                trend_magnitude = abs(slope) * T / (stds[i] + 1e-12)
+                if trend_magnitude > 2.0:
+                    warnings.warn(
+                        f"[SBBTS data check] Feature '{feature_names[i]}' shows a strong linear trend "
+                        f"(trend/std ≈ {trend_magnitude:.1f}). "
+                        f"Install statsmodels for a proper ADF stationarity test. "
+                        f"Non-stationary input may violate the KL condition.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+
+        # ── 3. Near-discrete feature ────────────────────────────────────
+        n_total = flat.shape[0]
+        for i in range(d):
+            n_unique = len(np_.unique(flat[:, i].round(6)))
+            ratio = n_unique / n_total
+            if ratio < 0.01:
+                warnings.warn(
+                    f"[SBBTS data check] Feature '{feature_names[i]}' appears nearly discrete "
+                    f"({n_unique} unique values out of {n_total} observations, ratio={ratio:.4f}). "
+                    f"SBBTS requires an absolutely continuous distribution (Assumption 3.1). "
+                    f"Highly rounded or binary features may cause training instability.",
+                    UserWarning,
+                    stacklevel=6,
+                )
+
+        # ── 4. Extreme kurtosis ─────────────────────────────────────────
+        try:
+            from scipy.stats import kurtosis as _kurt
+            for i in range(d):
+                kurt = float(_kurt(flat[:, i], fisher=True))
+                if kurt > 100:
+                    warnings.warn(
+                        f"[SBBTS data check] Feature '{feature_names[i]}' has extreme excess kurtosis "
+                        f"({kurt:.1f} > 100). "
+                        f"Very heavy tails may cause numerical instability in the score network. "
+                        f"Consider winsorizing or log-transforming the feature.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+        except ImportError:
+            pass
+
+        # ── 5. Scale mismatch across features ───────────────────────────
+        if d > 1:
+            std_max = float(stds.max())
+            std_min = float(stds[stds > 1e-12].min()) if (stds > 1e-12).any() else 1.0
+            ratio = std_max / std_min
+            if ratio > 1000:
+                warnings.warn(
+                    f"[SBBTS data check] Large scale mismatch across features "
+                    f"(max_std / min_std = {ratio:.0f} > 1000). "
+                    f"normalize_input=True (default) will rescale each feature independently, "
+                    f"but verify that all features carry meaningful signal at their native scale.",
+                    UserWarning,
+                    stacklevel=6,
+                )
 
     # ------------------------------------------------------------------
     # Internal setup
@@ -479,6 +613,8 @@ class SBBTS(nn.Module):
         verbose: bool = True,
         covariates: Optional[Union[np.ndarray, Tensor]] = None,
         resume_from_step: int = 0,
+        feature_names: Optional[list] = None,
+        check_input: bool = True,
     ) -> "SBBTS":
         """
         Fit the SBBTS model (Algorithm 1).
@@ -494,6 +630,14 @@ class SBBTS(nn.Module):
                 Use after loading a checkpoint mid-training so already-learned
                 weights are not reset.  Example: load a model saved after k=2,
                 then call fit(X, resume_from_step=2) to continue from k=3.
+            feature_names: Optional list of d strings labelling each input feature.
+                Overrides the value passed to __init__ if provided here.
+                Auto-generated as ["feature_0", ..., "feature_{d-1}"] if neither
+                __init__ nor fit() supply names.
+            check_input: If True (default), run pre-training sanity checks:
+                stationarity (ADF), near-constant features, discreteness,
+                extreme kurtosis, scale mismatch. Emits UserWarning or raises
+                ValueError for hard failures. Set to False to skip all checks.
 
         Returns:
             self (fitted model)
@@ -508,6 +652,19 @@ class SBBTS(nn.Module):
             covariates = covariates.to(self.device)
 
         n_samples, n_time_points, input_dim = X.shape
+
+        # Resolve feature names: fit() arg > __init__ arg > auto-generated
+        if feature_names is not None:
+            if len(feature_names) != input_dim:
+                raise ValueError(
+                    f"len(feature_names)={len(feature_names)} must equal d={input_dim}"
+                )
+            self.feature_names = list(feature_names)
+        elif self.feature_names is None:
+            self.feature_names = [f"feature_{i}" for i in range(input_dim)]
+
+        if check_input:
+            self._check_data_conditions(X, self.feature_names)
 
         self._validate_beta_for_data(n_time_points, T)
         self.time_points = self._create_time_points(n_time_points, T)
@@ -1089,6 +1246,54 @@ class SBBTS(nn.Module):
         X_synth = self.sample(n=n_synth)
         return _diagnose(X_real, X_synth, figsize=figsize, title=title)
 
+    def diagnose_generic(
+        self,
+        X_real: Union[np.ndarray, Tensor],
+        n_synth: int = 200,
+        feature_names: Optional[list] = None,
+        figsize: tuple = None,
+        title: str = "SBBTS Generic Diagnostic",
+        max_lag: int = 20,
+        n_paths: int = 5,
+        max_cols: int = 3,
+    ):
+        """
+        Domain-agnostic diagnostic figure (no financial assumptions).
+
+        Generates a composite figure with per-feature panels for sample paths,
+        marginal distributions, ACF, and cross-feature correlation — suitable
+        for any multivariate time series (returns, volatility, macro factors, etc.).
+
+        Args:
+            X_real:        Real data, shape (N, T, d).
+            n_synth:       Number of synthetic samples to generate.
+            feature_names: Feature labels. Falls back to self.feature_names if None.
+            figsize:       Figure size. Auto-computed from d if None.
+            title:         Figure title.
+            max_lag:       ACF lag count.
+            n_paths:       Sample trajectories per panel.
+            max_cols:      Grid columns per row of feature panels.
+
+        Returns:
+            matplotlib.Figure
+        """
+        from sbbts.utils.visualization import diagnose_generic as _dg
+
+        if isinstance(X_real, Tensor):
+            X_real = X_real.cpu().numpy()
+
+        names = feature_names if feature_names is not None else self.feature_names
+        X_synth = self.sample(n=n_synth)
+        return _dg(
+            X_real, X_synth,
+            feature_names=names,
+            figsize=figsize,
+            title=title,
+            max_lag=max_lag,
+            n_paths=n_paths,
+            max_cols=max_cols,
+        )
+
     def evaluate_augmentation(
         self,
         X_train: Union[np.ndarray, Tensor],
@@ -1175,6 +1380,7 @@ class SBBTS(nn.Module):
             "fitted": self._fitted,
             "train_mean": self._train_mean,
             "train_std": self._train_std,
+            "feature_names": self.feature_names,
         }
         torch.save(checkpoint, path)
 
@@ -1223,4 +1429,5 @@ class SBBTS(nn.Module):
 
         model.time_points = checkpoint["time_points"]
         model._fitted = checkpoint["fitted"]
+        model.feature_names = checkpoint.get("feature_names")
         return model
