@@ -183,7 +183,6 @@ fig = full_diagnose(X_real, X_synth)  # 12-panel: + cluster, leverage, rolling v
 metrics = compute_metrics(X_real, X_synth)   # financial stylized facts
 print(f"Ann std ratio: {metrics['ann_std_ratio']:.3f}")
 print(f"ACF|r| ratio:  {metrics['acf_abs_sum_ratio']:.3f}")
-print(f"TSTR:          see compute_tstr()")
 ```
 
 The `feature_names` parameter propagates automatically when set via `fit()`:
@@ -191,6 +190,68 @@ The `feature_names` parameter propagates automatically when set via `fit()`:
 ```python
 model.fit(X_returns, feature_names=["SPX"])
 fig = model.diagnose_generic(X_real)    # "SPX" appears on axes automatically
+```
+
+---
+
+## Evaluating augmentation quality
+
+`evaluate_augmentation()` runs a TSTR (Train-on-Synthetic, Test-on-Real) benchmark
+with zero configuration — no custom function needed:
+
+```python
+result = model.evaluate_augmentation(X_real)
+
+# result["tstr"] contains:
+print(f"TSTR ratio  : {result['tstr']['ratio']:.4f}")   # target < 1.05
+print(f"TRTR MSE    : {result['tstr']['trtr_mse']:.8f}")
+print(f"TSTR MSE    : {result['tstr']['tstr_mse']:.8f}")
+```
+
+You can also pass a custom downstream model function for backward compatibility:
+
+```python
+from sklearn.linear_model import Ridge
+
+def my_downstream(X_synth, X_real_test):
+    # train on synthetic, score on real
+    ...
+    return score
+
+result = model.evaluate_augmentation(X_real, downstream_model_fn=my_downstream)
+```
+
+---
+
+## Conditional generation (fan charts)
+
+`sample_conditional()` generates plausible continuations of an observed prefix:
+
+```python
+T_prefix = 50
+X_prefix = X_train[-1, :T_prefix, :]       # (T_prefix, d) — observed history
+X_fan    = model.sample_conditional(X_prefix, n=200)  # (200, T, d)
+
+# Batch prefix: same prefix for all n paths
+# X_prefix can also be (B, T_prefix, d) for B different prefixes
+```
+
+Applications: conditional stress testing, scenario fan charts, rolling forecast
+simulation. The prefix is matched via the learned transport map — not a naive
+zero-order hold.
+
+---
+
+## Reproducibility and scheduler
+
+```python
+# Fully reproducible run
+model = SBBTS(beta=beta, n_steps=5, seed=42, lr_scheduler="cosine")
+model.fit(X_train, checkpoint_dir="runs/exp1/")
+
+# lr_scheduler="cosine": learning rate decays from lr to lr/100 each outer step
+# lr_scheduler="none":   constant learning rate
+# seed: fixes torch + numpy + CUDA RNG at the start of fit()
 ```
 
 ---

@@ -15,6 +15,10 @@ New features over baseline:
     - diagnose() method for visual validation
     - Memory management during long sampling runs
     - Optional W&B/MLflow logging via logger= parameter
+    - Cosine LR scheduler for better convergence
+    - Automatic checkpointing between outer steps (checkpoint_dir)
+    - Reproducibility via seed parameter
+    - SBBTS.from_config(path) to build model from YAML
 """
 
 import gc
@@ -131,10 +135,14 @@ class SBBTS(nn.Module):
         covariate_dim: int = 0,
         # Optimisation stability
         grad_clip: float = 1.0,
+        # LR scheduling
+        lr_scheduler: str = "cosine",
         # Input normalisation
         normalize_input: bool = True,
         # Feature metadata
         feature_names: Optional[list] = None,
+        # Reproducibility
+        seed: Optional[int] = None,
         # Logging
         logger=None,
         log_dir: Optional[str] = None,
@@ -174,6 +182,12 @@ class SBBTS(nn.Module):
                 Stored in the model and propagated automatically to diagnose() and
                 diagnose_generic(). Can be overridden at plot time. If None, names
                 are auto-assigned in fit() as ["feature_0", ..., "feature_{d-1}"].
+            lr_scheduler: Learning rate scheduling strategy applied within each outer
+                step. Options: 'cosine' (CosineAnnealingLR, recommended) or 'none'
+                (fixed lr). Cosine decay improves convergence in long training runs
+                by gradually reducing lr from learning_rate to learning_rate/100.
+            seed: Optional integer seed for full reproducibility. Sets torch and numpy
+                random states at the start of fit(). Default None (non-deterministic).
             logger: Optional logger with .log(dict) method (W&B, MLflow, SBBTSLogger, etc.)
             log_dir: If set, auto-creates a SBBTSLogger in this directory and uses it
                 as the run logger (ignored when logger= is explicitly provided).
@@ -185,6 +199,10 @@ class SBBTS(nn.Module):
         if encoder_type not in ("transformer", "signature"):
             raise ValueError(
                 f"encoder_type must be 'transformer' or 'signature', got {encoder_type!r}"
+            )
+        if lr_scheduler not in ("cosine", "none"):
+            raise ValueError(
+                f"lr_scheduler must be 'cosine' or 'none', got {lr_scheduler!r}"
             )
 
         self.beta = beta
@@ -210,7 +228,9 @@ class SBBTS(nn.Module):
         self.signature_depth = signature_depth
         self.covariate_dim = covariate_dim
         self.grad_clip = grad_clip
+        self.lr_scheduler = lr_scheduler
         self.normalize_input = normalize_input
+        self.seed = seed
         self.feature_names: Optional[list] = list(feature_names) if feature_names is not None else None
         # Filled by fit(); used to denormalise sample() output
         self._train_mean: Optional[Tensor] = None
@@ -261,6 +281,72 @@ class SBBTS(nn.Module):
         """
         dt = T / (n_time_points - 1)
         return safety_factor / dt
+
+    @classmethod
+    def from_config(cls, config_path: Union[str, Path] = None) -> "SBBTS":
+        """
+        Instantiate SBBTS from a YAML configuration file.
+
+        The YAML file maps to __init__ parameters. Unknown keys are ignored.
+        When config_path is None, the built-in default.yaml is loaded.
+
+        Example YAML::
+
+            beta: 250.0
+            n_steps: 5
+            n_epochs: 1000
+            batch_size: 128
+            learning_rate: 0.001
+            d_model: 128
+            n_heads: 16
+            n_encoder_layers: 1
+            n_euler_steps: 50
+            encoder_type: transformer
+            lr_scheduler: cosine
+            normalize_input: true
+            seed: 42
+
+        Args:
+            config_path: Path to YAML file, or None to use default.yaml.
+
+        Returns:
+            Configured SBBTS instance (not yet fitted).
+
+        Example:
+            >>> model = SBBTS.from_config("my_config.yaml")
+            >>> model.fit(X_train)
+        """
+        if config_path is None:
+            cfg = load_default_config()
+        else:
+            with open(Path(config_path), "r") as f:
+                cfg = yaml.safe_load(f) or {}
+
+        # Flatten nested YAML sections (training:, network:, etc.) into a flat dict
+        flat: dict = {}
+        for v in cfg.values():
+            if isinstance(v, dict):
+                flat.update(v)
+            # top-level scalars are also valid (flat YAML)
+        for k, v in cfg.items():
+            if not isinstance(v, dict):
+                flat[k] = v
+
+        # Map YAML keys → __init__ parameter names
+        _key_map = {
+            "K": "n_steps",
+            "N_pi": "n_euler_steps",
+            "activation": None,  # handled by architecture, not exposed
+        }
+        init_kwargs: dict = {}
+        import inspect
+        valid_params = set(inspect.signature(cls.__init__).parameters.keys()) - {"self"}
+        for key, val in flat.items():
+            mapped = _key_map.get(key, key)
+            if mapped is not None and mapped in valid_params:
+                init_kwargs[mapped] = val
+
+        return cls(**init_kwargs)
 
     # ------------------------------------------------------------------
     # Data condition checks
@@ -615,6 +701,7 @@ class SBBTS(nn.Module):
         resume_from_step: int = 0,
         feature_names: Optional[list] = None,
         check_input: bool = True,
+        checkpoint_dir: Optional[Union[str, Path]] = None,
     ) -> "SBBTS":
         """
         Fit the SBBTS model (Algorithm 1).
@@ -638,10 +725,26 @@ class SBBTS(nn.Module):
                 stationarity (ADF), near-constant features, discreteness,
                 extreme kurtosis, scale mismatch. Emits UserWarning or raises
                 ValueError for hard failures. Set to False to skip all checks.
+            checkpoint_dir: If set, the model is saved to this directory after
+                each outer step k as ``checkpoint_k{k+1}.pt``. Allows resuming
+                interrupted training via resume_from_step + SBBTS.load().
 
         Returns:
             self (fitted model)
         """
+        # Reproducibility — seed pytorch and numpy before any random ops
+        _seed = self.seed
+        if _seed is not None:
+            torch.manual_seed(_seed)
+            np.random.seed(_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(_seed)
+
+        # Checkpoint directory setup
+        _ckpt_dir: Optional[Path] = Path(checkpoint_dir) if checkpoint_dir is not None else None
+        if _ckpt_dir is not None:
+            _ckpt_dir.mkdir(parents=True, exist_ok=True)
+
         if isinstance(X, np.ndarray):
             X = torch.from_numpy(X).float()
         X = X.to(self.device)
@@ -750,6 +853,20 @@ class SBBTS(nn.Module):
             else None
         )
 
+        # LR scheduler — cosine annealing decays lr from learning_rate → lr/100
+        # across n_epochs steps within each outer iteration, then resets.
+        def _make_scheduler(opt):
+            if self.lr_scheduler == "cosine":
+                return torch.optim.lr_scheduler.CosineAnnealingLR(
+                    opt,
+                    T_max=self.n_epochs,
+                    eta_min=self.learning_rate / 100,
+                )
+            return None
+
+        scheduler = _make_scheduler(optimizer)
+        inv_scheduler = _make_scheduler(inv_optimizer) if inv_optimizer is not None else None
+
         use_amp_flag = self.use_amp and self.device.type == "cuda"
         scaler = torch.amp.GradScaler("cuda", enabled=use_amp_flag)
         inv_scaler = torch.amp.GradScaler("cuda", enabled=use_amp_flag) if inv_optimizer else None
@@ -831,14 +948,20 @@ class SBBTS(nn.Module):
                     epoch_loss += loss.item()
                     n_batches += 1
 
+                # Step LR scheduler once per epoch (after all mini-batches)
+                if scheduler is not None:
+                    scheduler.step()
+
                 avg_loss = epoch_loss / max(n_batches, 1)
                 _step_losses.append(avg_loss)
                 if self.grad_clip > 0.0:
                     _step_gradnorms.append(epoch_max_gnorm)
 
                 if log_verbose and (epoch + 1) % 100 == 0:
+                    current_lr = optimizer.param_groups[0]["lr"]
                     tqdm.write(
-                        f"  Epoch {epoch+1}: train_loss = {avg_loss:.6f}  grad_norm_max = {epoch_max_gnorm:.4f}"
+                        f"  Epoch {epoch+1}: train_loss = {avg_loss:.6f}  "
+                        f"grad_norm_max = {epoch_max_gnorm:.4f}  lr = {current_lr:.2e}"
                     )
 
                 if _is_rank0 and self.logger is not None:
@@ -905,6 +1028,22 @@ class SBBTS(nn.Module):
 
             if early_stopper is not None:
                 early_stopper.reset()
+
+            # Reset LR scheduler at the start of each new outer step so cosine
+            # decay restarts from learning_rate rather than continuing the descent.
+            if scheduler is not None:
+                scheduler = _make_scheduler(optimizer)
+            if inv_scheduler is not None:
+                inv_scheduler = _make_scheduler(inv_optimizer)
+
+            # Automatic checkpointing — save model state after each outer step.
+            # Use SBBTS.load(path) + fit(X, resume_from_step=k+1) to resume.
+            if _ckpt_dir is not None and _is_rank0:
+                _ckpt_path = _ckpt_dir / f"checkpoint_k{k+1}.pt"
+                self._fitted = True  # mark fitted so save() works mid-training
+                self.save(_ckpt_path)
+                if log_verbose:
+                    tqdm.write(f"  Checkpoint saved → {_ckpt_path}")
 
             # Write per-step convergence summary to diagnostics.log
             if (
@@ -1003,6 +1142,14 @@ class SBBTS(nn.Module):
                         + drift * _dt_bridge
                         + torch.randn_like(y_current) * math.sqrt(_dt_bridge)
                     )
+                    # Periodic memory cleanup inside the Euler loop to handle
+                    # long trajectories with many Euler steps (n_euler_steps >> 50).
+                    if (
+                        self.device.type == "cuda"
+                        and (step + 1) % _MEMORY_CLEANUP_INTERVAL == 0
+                    ):
+                        gc.collect()
+                        torch.cuda.empty_cache()
 
                 # Recover X from Y at bridge-time s ≈ T_bridge
                 s_end_tensor = torch.full((n,), _T_bridge - _safe_s, device=self.device)
@@ -1024,7 +1171,7 @@ class SBBTS(nn.Module):
                         trajectory[:, : i + 2, :], covariates=cov_so_far
                     )
 
-                # Periodic memory cleanup for long rollouts
+                # Cleanup after each interval (handles long trajectory rollouts)
                 if (i + 1) % _MEMORY_CLEANUP_INTERVAL == 0 and self.device.type == "cuda":
                     gc.collect()
                     torch.cuda.empty_cache()
@@ -1035,12 +1182,14 @@ class SBBTS(nn.Module):
 
         result = trajectory.cpu().numpy()
 
-        # Undo input normalisation so samples live in the original data scale.
-        if self.normalize_input and self._train_std is not None:
-            result = result * self._train_std.cpu().numpy() + self._train_mean.cpu().numpy()
-
+        # Inverse operations must be applied in reverse training order:
+        # training: X_orig → normalize → X_norm → dim_reduce → X_reduced (→ score net)
+        # sampling: X_reduced → inv_dim_reduce → X_norm → denormalize → X_orig
         if self.dim_reducer is not None:
             result = self.dim_reducer.inverse_transform(result)
+
+        if self.normalize_input and self._train_std is not None:
+            result = result * self._train_std.cpu().numpy() + self._train_mean.cpu().numpy()
 
         return result if return_full_trajectory else result[:, -1, :]
 
@@ -1100,14 +1249,25 @@ class SBBTS(nn.Module):
             trajectory = torch.zeros(n, n_points, self.input_dim, device=self.device)
             trajectory[:, :T_prefix, :] = prefix_batch
 
-            # Y ≈ X at large β: use prefix last point as starting Y.
-            # For more accuracy we could subtract (1/β)·score, but the large-β
-            # approximation is accurate enough and avoids a chicken-and-egg problem
-            # (we need context to compute score, which needs the Y value).
-            y_current = prefix_batch[:, -1, :].clone()
-
             # Encode full prefix as context for the first new interval.
             context = self.score_net.encode_trajectory(prefix_batch)
+
+            # Compute Y at the last prefix step using the actual transport map:
+            #   Y = X - (1/β) · s_θ(t≈T_bridge, X, context)
+            # This is exact up to the large-β approximation used everywhere else,
+            # but is far more accurate than the naive Y ≈ X when β is moderate.
+            _last_x = prefix_batch[:, -1, :]
+            _s_end_for_prefix = torch.full((n,), _T_bridge - _safe_s, device=self.device)
+            with torch.no_grad():
+                _score_last = self.score_net.forward_with_context(
+                    _s_end_for_prefix, _last_x, context
+                )
+            if self._is_low_beta and self.inverse_net is not None:
+                # In low-β mode InverseNet gives X→Y direction as well
+                y_current = _last_x - self.inverse_net(_s_end_for_prefix, _last_x)
+            else:
+                from sbbts.transport.transport_map import x_to_y
+                y_current = x_to_y(_last_x, _score_last, self.beta)
 
             for i in range(T_prefix - 1, n_intervals):
                 for step in range(self.n_euler_steps):
@@ -1146,11 +1306,12 @@ class SBBTS(nn.Module):
 
         result = trajectory.cpu().numpy()
 
-        if self.normalize_input and self._train_std is not None:
-            result = result * self._train_std.cpu().numpy() + self._train_mean.cpu().numpy()
-
+        # Same inverse order as sample(): dim_reduce first, then denormalize
         if self.dim_reducer is not None:
             result = self.dim_reducer.inverse_transform(result)
+
+        if self.normalize_input and self._train_std is not None:
+            result = result * self._train_std.cpu().numpy() + self._train_mean.cpu().numpy()
 
         return result
 
@@ -1298,33 +1459,70 @@ class SBBTS(nn.Module):
         self,
         X_train: Union[np.ndarray, Tensor],
         X_test: Union[np.ndarray, Tensor],
-        downstream_model_fn,
+        downstream_model_fn=None,
         augmentation_factor: int = 5,
+        ar_order: int = 5,
     ) -> dict:
         """
         Evaluate whether data augmentation improves a downstream model.
 
-        Trains downstream_model_fn with and without augmentation, compares
-        performance on X_test.
+        Trains a model with and without augmentation and compares performance
+        on X_test.  By default uses TSTR (Train-on-Synthetic, Test-on-Real)
+        with a linear AR(ar_order) ridge regression — no downstream_model_fn
+        needed.  A custom function can still be provided for domain-specific
+        evaluations.
 
         Args:
             X_train: Training data, shape (N, T, d)
             X_test: Test data, shape (M, T, d)
-            downstream_model_fn: Callable (X_train, X_test) -> metrics_dict.
-                Called twice: once with real-only, once with augmented data.
-            augmentation_factor: Augmentation factor for augmented run
+            downstream_model_fn: Optional callable (X_train, X_test) -> metrics_dict.
+                When None (default), uses the built-in TSTR metric
+                (compute_tstr) which requires scikit-learn.
+            augmentation_factor: Factor of synthetic samples added (e.g. 5 →
+                5 × N synthetic samples mixed with N real samples).
+            ar_order: AR lag order used by the built-in TSTR evaluator.
 
         Returns:
-            dict with keys 'baseline', 'augmented', 'improvement'
+            dict with keys:
+
+            * ``baseline``   — metrics on real training data only
+            * ``augmented``  — metrics on augmented (real + synthetic) data
+            * ``improvement`` — per-metric delta (augmented − baseline)
+            * ``tstr``        — full compute_tstr dict (only when default evaluator)
         """
+        from sbbts.utils.metrics import compute_tstr
+
         if isinstance(X_train, Tensor):
             X_train = X_train.cpu().numpy()
         if isinstance(X_test, Tensor):
             X_test = X_test.cpu().numpy()
 
-        baseline_metrics = downstream_model_fn(X_train, X_test)
-
         X_aug = self.augment(X_train, factor=augmentation_factor)
+
+        if downstream_model_fn is None:
+            # Built-in TSTR: AR(p) ridge trained on synth-only, evaluated on real test.
+            # We also compute TRTR (train-on-real, test-on-real) as a baseline.
+            n_synth = augmentation_factor * len(X_train)
+            X_synth = X_aug[len(X_train):]  # augment prepends real, synth is the tail
+
+            tstr_result = compute_tstr(
+                X_real=np.concatenate([X_train, X_test], axis=0),
+                X_synth=X_synth,
+                ar_order=ar_order,
+                test_fraction=len(X_test) / max(len(X_train) + len(X_test), 1),
+            )
+            baseline_metrics = {"ar_mse": tstr_result["trtr_mse"]}
+            augmented_metrics = {"ar_mse": tstr_result["tstr_mse"]}
+            improvement = {"ar_mse": tstr_result["tstr_mse"] - tstr_result["trtr_mse"]}
+            return {
+                "baseline": baseline_metrics,
+                "augmented": augmented_metrics,
+                "improvement": improvement,
+                "tstr": tstr_result,
+            }
+
+        # Custom downstream evaluator path (backward-compatible)
+        baseline_metrics = downstream_model_fn(X_train, X_test)
         augmented_metrics = downstream_model_fn(X_aug, X_test)
 
         improvement = {}
@@ -1375,6 +1573,8 @@ class SBBTS(nn.Module):
                 "covariate_dim": self.covariate_dim,
                 "is_low_beta": self._is_low_beta,
                 "normalize_input": self.normalize_input,
+                "lr_scheduler": self.lr_scheduler,
+                "seed": self.seed,
             },
             "time_points": self.time_points,
             "fitted": self._fitted,
@@ -1414,6 +1614,8 @@ class SBBTS(nn.Module):
             signature_depth=cfg.get("signature_depth", 2),
             covariate_dim=cfg.get("covariate_dim", 0),
             normalize_input=cfg.get("normalize_input", False),
+            lr_scheduler=cfg.get("lr_scheduler", "cosine"),
+            seed=cfg.get("seed", None),
         )
 
         model._is_low_beta = cfg.get("is_low_beta", False)

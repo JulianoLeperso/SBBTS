@@ -285,16 +285,6 @@ After training, check these metrics in order of importance:
 | **ACF\|r\| sum** | volatility clustering | > 50% of real |
 | **Excess kurtosis** | fat tails | within 30% of real |
 
-Quick check:
-
-```python
-from sbbts.utils.metrics import compute_stylized_facts
-
-X_synth = model.sample(n=500)
-metrics = compute_stylized_facts(X_real, X_synth)
-print(metrics)
-```
-
 ---
 
 ## Known limitations
@@ -327,20 +317,35 @@ SBBTS(
     normalize_input=True,        # strongly recommended for log returns
     grad_clip=0.0,               # 0 = disabled; try 1.0 if loss spikes
     early_stopping_patience=0,   # 0 = disabled
+    lr_scheduler="cosine",       # "cosine" or "none"; cosine anneals lr to lr/100
+    seed=None,                   # integer for reproducible runs, None = random
     encoder_type="transformer",  # or "signature"
     feature_names=None,          # optional list of d feature labels
     device=None,                 # auto-detect
     logger=None,                 # SBBTSLogger or W&B/MLflow compatible
 )
 
-model.fit(X, feature_names=None) # X: (N, T, d); feature_names overrides __init__
+model.fit(
+    X,                           # (N, T, d) training data
+    feature_names=None,          # overrides __init__
+    resume_from_step=0,          # start at outer step k (warm restart)
+    checkpoint_dir=None,         # directory for auto-saved checkpoints per outer step
+)
 model.sample(n)                  # → (n, T, d) ndarray
-model.augment(X_real, factor=200)# → (N + 200N, T, d)
+model.sample_conditional(        # fan chart: n continuations given an observed prefix
+    X_prefix,                    # (T_prefix, d) or (B, T_prefix, d)
+    n=200,
+)                                # → (n, T, d) ndarray
+model.sample_batches(n, batch_size=500)  # generator of (B, T, d) batches (avoids OOM)
+model.augment(X_real, factor=200)        # → (N + 200N, T, d)
+model.evaluate_augmentation(X_real)      # TSTR dict (ratio, trtr_mse, tstr_mse, …)
 model.diagnose(X_real)           # financial diagnostic (VaR, Sharpe, leverage…)
 model.diagnose_generic(X_real)   # domain-agnostic diagnostic (paths, dist, ACF, corr)
 model.save("model.pt")
 SBBTS.load("model.pt")
 SBBTS.suggest_beta(n_time_points, safety_factor=5.0)
+SBBTS.from_config()              # load default.yaml → SBBTS instance
+SBBTS.from_config("my.yaml")    # load custom YAML → SBBTS instance
 ```
 
 **Generic (domain-agnostic) utilities:**
@@ -358,12 +363,101 @@ from sbbts import (
 
 ---
 
+## YAML config
+
+Load the bundled default config (mirrors the paper's full hyperparameters) or supply
+your own YAML file:
+
+```python
+# Use bundled defaults (sbbts/configs/default.yaml)
+model = SBBTS.from_config()
+
+# Use a custom YAML file
+model = SBBTS.from_config("my_config.yaml")
+model.fit(X_train)
+```
+
+Nested YAML sections (`training:`, `network:`, `sampling:`, …) are automatically
+flattened, and section-specific aliases are resolved (`K → n_steps`, `N_pi → n_euler_steps`).
+
+---
+
+## Reproducibility
+
+Set `seed` to get identical samples across runs:
+
+```python
+model = SBBTS(beta=beta, n_steps=2, seed=42)
+model.fit(X_train)
+
+X_synth_a = model.sample(n=100)
+
+# Reload and resample — same result
+model2 = SBBTS.load("model.pt")
+X_synth_b = model2.sample(n=100)
+assert np.allclose(X_synth_a, X_synth_b)  # identical if same seed
+```
+
+The seed fixes `torch`, `numpy`, and CUDA RNG states at the start of `fit()`.
+
+---
+
+## Checkpointing
+
+Pass `checkpoint_dir` to `fit()` to save a `.pt` file after every outer step.
+Combine with `resume_from_step` to recover from interruptions:
+
+```python
+# First run — saves checkpoint_k1.pt, checkpoint_k2.pt, …
+model = SBBTS(beta=beta, n_steps=5, d_model=128, n_epochs=1000)
+model.fit(X_train, checkpoint_dir="checkpoints/")
+
+# If interrupted at k=2, reload and resume at k=3:
+model = SBBTS.load("checkpoints/checkpoint_k2.pt")
+model.fit(X_train, checkpoint_dir="checkpoints/", resume_from_step=2)
+```
+
+---
+
+## Evaluating output quality
+
+After training, check these metrics in order of importance:
+
+| Metric | What it measures | Target |
+|---|---|---|
+| **TSTR ratio** | synthetic as substitute for real (AR task) | < 1.05 = excellent |
+| **ann_std ratio** | daily vol of synth vs real | 0.8–1.1 |
+| **RV mean ratio** | realized variance calibration | 0.8–1.1 |
+| **ACF\|r\| sum** | volatility clustering | > 50% of real |
+| **Excess kurtosis** | fat tails | within 30% of real |
+
+```python
+from sbbts.utils.metrics import compute_metrics, compute_tstr
+
+X_synth = model.sample(n=500)
+
+# Stylized facts dict
+metrics = compute_metrics(X_real, X_synth)
+print(metrics["ann_std_ratio"])     # target: 0.8–1.1
+print(metrics["acf_abs_sum_ratio"]) # target: > 0.5
+
+# TSTR quality score (Train-on-Synthetic, Test-on-Real)
+tstr = compute_tstr(X_real, X_synth, ar_order=5)
+print(f"TSTR ratio: {tstr['ratio']:.4f}")  # target: < 1.05
+
+# Or via the model (zero-configuration)
+result = model.evaluate_augmentation(X_real)
+print(f"TSTR ratio: {result['tstr']['ratio']:.4f}")
+```
+
+---
+
 ## Saving and resuming
 
 ```python
 model.save("checkpoint_k3.pt")          # save after any outer iteration
 model_resumed = SBBTS.load("checkpoint_k3.pt")
-model_resumed.fit(X_train)              # continues training from loaded weights
+model_resumed.fit(X_train, resume_from_step=3)  # continues from outer step 3
 ```
 
 ---

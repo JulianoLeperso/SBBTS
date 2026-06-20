@@ -1,12 +1,21 @@
 # SBBTS Default Configuration
 # Values from Table 2 of the SBBTS paper (Section C, Appendix)
+#
+# Usage:
+#   model = SBBTS.from_config()                    # loads this file
+#   model = SBBTS.from_config("my_config.yaml")    # loads custom file
+#
+# All keys map directly to SBBTS.__init__ parameters.
+# Nested sections (training:, network:, etc.) are flattened automatically.
 
 # Training parameters
 training:
-  K: 5                    # Number of outer iterations (transport map updates)
-  n_epochs: 1000          # Training epochs per K iteration
+  K: 5                    # → n_steps: number of outer iterations (transport map updates)
+  n_epochs: 1000          # Training epochs per outer iteration
   batch_size: 128         # Mini-batch size
   learning_rate: 1.0e-3   # Adam optimizer learning rate
+  lr_scheduler: "cosine"  # LR schedule within each outer step: 'cosine' or 'none'
+  seed: null              # Set an integer for reproducible runs (e.g. 42), null = random
 
 # Time parameters
 time:
@@ -19,18 +28,18 @@ network:
   d_model: 128            # Latent dimension for all embeddings
   n_heads: 16             # Number of attention heads in transformer encoder
   n_encoder_layers: 1     # Encoder-only transformer layers
-  activation: "silu"      # SiLU activation (Appendix B)
+  activation: "silu"      # SiLU activation (Appendix B) — informational only
   dropout: 0.0            # No dropout mentioned in paper
 
 # Euler-Maruyama sampling
 sampling:
-  N_pi: 50                # Number of discretization steps for SDE simulation
+  N_pi: 50                # → n_euler_steps: discretization steps for SDE simulation
 
 # SBB parameters
 sbb:
-  beta: 10.0              # Default β - should satisfy β * Δt > 1 for all intervals
+  beta: 10.0              # Default β — must satisfy β * Δt > 1 for all intervals
   # For T=1 and n=252 intervals: Δt ≈ 0.004, so β > 250 is safe
-  # For fewer intervals, smaller β can be used
+  # Call SBBTS.suggest_beta(n_time_points=253) to compute automatically
 
 # Optimizer
 optimizer:

@@ -359,6 +359,21 @@ class PCAKMeansReducer:
 
         factor_features = X_reduced.reshape(X_reduced.shape[0], -1).T
         n_components = self.pca_reducer._n_components_ or self.n_components
+
+        # Clamp n_clusters so k-means never sees fewer samples than clusters.
+        # This can happen when 'auto' Marchenko-Pastur gives very few components.
+        effective_n_clusters = min(self.n_clusters, n_components)
+        if effective_n_clusters < self.n_clusters:
+            import warnings as _w
+            _w.warn(
+                f"[PCAKMeansReducer] n_clusters={self.n_clusters} reduced to "
+                f"{effective_n_clusters} because only {n_components} PCA components "
+                f"were retained (n_components='auto' gave fewer components than clusters).",
+                UserWarning,
+                stacklevel=2,
+            )
+            self.clusterer.kmeans.n_clusters = effective_n_clusters
+
         self.clusterer.fit(factor_features[:n_components])
 
         if self.model_residuals and self.residual_modeler is not None:

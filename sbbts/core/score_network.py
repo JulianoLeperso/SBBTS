@@ -167,64 +167,6 @@ class ScoreNetwork(nn.Module):
         return self.drift_net.forward_batched(t, y, context)
 
 
-class ScoreNetworkWrapper(nn.Module):
-    """
-    Wrapper that stores the score network state during training.
-
-    Used in Algorithm 1 to maintain s^k_θ across iterations.
-    """
-
-    def __init__(self, score_net: ScoreNetwork):
-        """
-        Args:
-            score_net: The underlying score network
-        """
-        super().__init__()
-        self.score_net = score_net
-        self._cached_contexts = None
-
-    def cache_contexts(self, trajectory: Tensor) -> None:
-        """
-        Cache all context vectors for a batch of trajectories.
-
-        This avoids recomputing Φθ(Y_{t_0:t_i}) for each time step during training.
-
-        Args:
-            trajectory: Full trajectory X_{t_0:t_n}, shape (batch, n+1, d)
-        """
-        self._cached_contexts = self.score_net.encode_all_prefixes(trajectory)
-
-    def forward(
-        self,
-        t: Tensor,
-        y_t: Tensor,
-        interval_idx: int,
-        trajectory: Tensor = None,
-    ) -> Tensor:
-        """
-        Compute score using cached or fresh context.
-
-        Args:
-            t: Current time, shape (batch,) or scalar
-            y_t: Current state Y_t, shape (batch, d)
-            interval_idx: Index i of current interval [t_i, t_{i+1}]
-            trajectory: Optional trajectory (used if contexts not cached)
-
-        Returns:
-            Score s_θ, shape (batch, d)
-        """
-        if self._cached_contexts is not None:
-            context = self._cached_contexts[:, interval_idx, :]
-            return self.score_net.forward_with_context(t, y_t, context)
-        elif trajectory is not None:
-            return self.score_net(t, y_t, trajectory[:, : interval_idx + 1, :])
-        else:
-            raise ValueError("Either cached_contexts or trajectory must be provided")
-
-    def clear_cache(self) -> None:
-        """Clear cached contexts."""
-        self._cached_contexts = None
-
 
 def create_score_network(
     input_dim: int,

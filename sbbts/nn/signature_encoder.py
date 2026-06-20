@@ -21,6 +21,8 @@ References:
     Chevyrev & Kormilitzin (2016), "A primer on the signature method in machine learning"
 """
 
+import warnings
+
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -107,6 +109,14 @@ class PathSignatureEncoder(nn.Module):
 
         # Auto-reduce depth for high-d input
         if depth == 2 and signature_dim(input_dim, 2) > max_sig_dim:
+            warnings.warn(
+                f"[PathSignatureEncoder] depth=2 requested but signature_dim={signature_dim(input_dim, 2)} "
+                f"> max_sig_dim={max_sig_dim} for input_dim={input_dim}. "
+                f"Automatically reducing to depth=1 ({input_dim} features). "
+                f"Set max_sig_dim higher or use encoder_type='transformer' to avoid this.",
+                UserWarning,
+                stacklevel=2,
+            )
             self.depth = 1
         else:
             self.depth = depth
